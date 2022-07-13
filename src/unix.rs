@@ -11,7 +11,6 @@ use std::{
 };
 
 use crate::cmsg::{EcnCodepoint, Source, Transmit};
-use bytes::BufMut;
 use socket2::SockRef;
 use tokio::io::Interest;
 
@@ -97,23 +96,22 @@ impl UdpSocket {
         // if n == transmits.len() {}
         Ok(n)
     }
-    pub async fn send_msg<B: BufMut>(
-        &mut self,
+
+    pub async fn send_msg(
+        &self,
         state: &UdpState,
-        transmits: &[Transmit],
+        transmits: Transmit,
     ) -> Result<usize, io::Error> {
         let n = loop {
             self.io.writable().await?;
-            let last_send_error = &mut self.last_send_error;
             let io = &self.io;
             match io.try_io(Interest::WRITABLE, || {
-                send(state, SockRef::from(io), last_send_error, transmits)
+                send_msg(state, SockRef::from(io), &transmits)
             }) {
                 Ok(res) => break res,
                 Err(_would_block) => continue,
             }
         };
-        // if n == transmits.len() {}
         Ok(n)
     }
 
@@ -127,6 +125,22 @@ impl UdpSocket {
             self.io.readable().await?;
             let io = &self.io;
             match io.try_io(Interest::READABLE, || recv(SockRef::from(io), bufs, meta)) {
+                Ok(res) => return Ok(res),
+                Err(_would_block) => continue,
+            }
+        }
+    }
+
+    pub async fn recv_msg(&self, buf: IoSliceMut<'_>, meta: RecvMeta) -> Result<usize, io::Error> {
+        debug_assert!(!buf.is_empty());
+        let mut meta = meta;
+        let mut buf = buf;
+        loop {
+            self.io.readable().await?;
+            let io = &self.io;
+            match io.try_io(Interest::READABLE, || {
+                recv_msg(SockRef::from(io), &mut buf, &mut meta)
+            }) {
                 Ok(res) => return Ok(res),
                 Err(_would_block) => continue,
             }
@@ -167,9 +181,9 @@ impl UdpSocket {
         }
     }
 
-    // pub fn local_addr(&self) -> io::Result<SocketAddr> {
-    //     self.io.get_ref().local_addr()
-    // }
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.io.local_addr()
+    }
 }
 
 fn init(io: &std::net::UdpSocket) -> io::Result<()> {
@@ -297,9 +311,70 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn send_msg(state: &UdpState, io: SockRef<'_>, transmit: &Transmit) -> io::Result<usize> {
+    let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
+    let mut iovec: libc::iovec = unsafe { mem::zeroed() };
+    let mut cmsg = cmsg::Aligned([0u8; CMSG_LEN]);
+    // This assume_init looks a bit weird because one might think it
+    // assumes the SockAddr data to be initialized, but that call
+    // refers to the whole array, which itself is made up of MaybeUninit
+    // containers. Their presence protects the SockAddr inside from
+    // being assumed as initialized by the assume_init call.
+    // TODO: Replace this with uninit_array once it becomes MSRV-stable
+    let addr = socket2::SockAddr::from(transmit.destination);
+    let dst_addr = &addr;
+    prepare_msg(&transmit, dst_addr, &mut msg_hdr, &mut iovec, &mut cmsg);
+
+    loop {
+        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // Some network adapters do not support GSO. Unfortunately, Linux offers no easy way
+                    // for us to detect this short of an I/O error when we try to actually send
+                    // datagrams using it.
+                    #[cfg(target_os = "linux")]
+                    if e.raw_os_error() == Some(libc::EIO) {
+                        // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
+                        // may already be in the pipeline, so we need to tolerate additional failures.
+                        if state.max_gso_segments() > 1 {
+                            tracing::error!("got EIO, halting segmentation offload");
+                            state
+                                .max_gso_segments
+                                .store(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
+                    // Other errors are ignored, since they will ususally be handled
+                    // by higher level retransmits and timeouts.
+                    // - PermissionDenied errors have been observed due to iptable rules.
+                    //   Those are not fatal errors, since the
+                    //   configuration can be dynamically changed.
+                    // - Destination unreachable errors have been observed for other
+                    // log_sendmsg_error(last_send_error, e, &transmits[0]);
+
+                    // The ERRORS section in https://man7.org/linux/man-pages/man2/sendmmsg.2.html
+                    // describes that errors will only be returned if no message could be transmitted
+                    // at all. Therefore drop the first (problematic) message,
+                    // and retry the remaining ones.
+                    return Ok(n as usize);
+                }
+            }
+        }
+        return Ok(n as usize);
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
     state: &UdpState,
-    io: socket2::SockRef<'_>,
+    io: SockRef<'_>,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
@@ -457,6 +532,32 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
     }
     Ok(msg_count as usize)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn recv_msg(io: SockRef<'_>, bufs: &mut IoSliceMut<'_>, meta: &mut RecvMeta) -> io::Result<usize> {
+    let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+    let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+
+    prepare_recv(bufs, &mut name, &mut ctrl, &mut hdr);
+
+    let n = loop {
+        let n = unsafe { libc::recvmsg(io.as_raw_fd(), &mut hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+            continue;
+        }
+        break n;
+    };
+    *meta = decode_recv(&name, &hdr, n as usize);
+    Ok(n as usize)
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
