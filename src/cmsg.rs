@@ -4,6 +4,8 @@ use std::{
     ptr,
 };
 
+use bytes::{Bytes, BytesMut};
+
 #[derive(Copy, Clone)]
 #[repr(align(8))] // Conservative bound for align_of<cmsghdr>
 pub struct Aligned<T>(pub T);
@@ -139,13 +141,13 @@ impl EcnCodepoint {
 
 /// An outgoing packet
 #[derive(Debug)]
-pub struct Transmit {
+pub struct Transmit<B> {
     /// The socket this datagram should be sent to
     pub destination: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
-    pub contents: Vec<u8>,
+    pub contents: B,
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,
@@ -160,4 +162,45 @@ pub enum Source {
     Ip(IpAddr),
     /// Set via interface index, ipv4 only
     Interface(u32),
+}
+
+pub trait AsPtr<T> {
+    fn as_ptr(&self) -> *const T;
+    fn len(&self) -> usize;
+}
+
+impl<T> AsPtr<T> for Vec<T> {
+    fn as_ptr(&self) -> *const T {
+        self.as_ptr()
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<T> AsPtr<T> for [T] {
+    fn as_ptr(&self) -> *const T {
+        self.as_ptr()
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+impl AsPtr<u8> for BytesMut {
+    fn as_ptr(&self) -> *const u8 {
+        <[u8]>::as_ptr(self.as_ref())
+        // <[u8]>::as_mut_ptr(self.as_mut())
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl AsPtr<u8> for Bytes {
+    fn as_ptr(&self) -> *const u8 {
+        <[u8]>::as_ptr(self.as_ref())
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
 }

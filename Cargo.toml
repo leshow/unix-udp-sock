@@ -14,3 +14,4 @@ libc = "0.2.126"
 socket2 = "0.4"
 tracing = "0.1.35"
 tokio = { version = "1.19", features = ["net"] }
+bytes = "1.1.0"

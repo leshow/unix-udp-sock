@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::cmsg::{EcnCodepoint, Transmit};
+use crate::cmsg::{AsPtr, EcnCodepoint, Transmit};
 use tracing::warn;
 
 macro_rules! ready {
@@ -95,10 +95,10 @@ const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 ///
 /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
 /// has elapsed since the last error was logged.
-fn log_sendmsg_error(
+fn log_sendmsg_error<B: AsPtr<u8>>(
     last_send_error: &mut Instant,
     err: impl core::fmt::Debug,
-    transmit: &Transmit,
+    transmit: &Transmit<B>,
 ) {
     let now = Instant::now();
     if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {

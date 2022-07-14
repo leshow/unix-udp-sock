@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use crate::cmsg::{EcnCodepoint, Source, Transmit};
+use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
 use socket2::SockRef;
 use tokio::io::Interest;
 
@@ -77,10 +77,10 @@ impl UdpSocket {
         self.io.recv(buf).await
     }
 
-    pub async fn send_mmsg(
+    pub async fn send_mmsg<B: AsPtr<u8>>(
         &mut self,
         state: &UdpState,
-        transmits: &[Transmit],
+        transmits: &[Transmit<B>],
     ) -> Result<usize, io::Error> {
         let n = loop {
             self.io.writable().await?;
@@ -97,10 +97,10 @@ impl UdpSocket {
         Ok(n)
     }
 
-    pub async fn send_msg(
+    pub async fn send_msg<B: AsPtr<u8>>(
         &self,
         state: &UdpState,
-        transmits: Transmit,
+        transmits: Transmit<B>,
     ) -> Result<usize, io::Error> {
         let n = loop {
             self.io.writable().await?;
@@ -147,11 +147,11 @@ impl UdpSocket {
         }
     }
 
-    pub fn poll_send_mmsg(
+    pub fn poll_send_mmsg<B: AsPtr<u8>>(
         &mut self,
         state: &UdpState,
         cx: &mut Context,
-        transmits: &[Transmit],
+        transmits: &[Transmit<B>],
     ) -> Poll<Result<usize, io::Error>> {
         loop {
             let last_send_error = &mut self.last_send_error;
@@ -311,19 +311,18 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn send_msg(state: &UdpState, io: SockRef<'_>, transmit: &Transmit) -> io::Result<usize> {
+fn send_msg<B: AsPtr<u8>>(
+    state: &UdpState,
+    io: SockRef<'_>,
+    transmit: &Transmit<B>,
+) -> io::Result<usize> {
     let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iovec: libc::iovec = unsafe { mem::zeroed() };
     let mut cmsg = cmsg::Aligned([0u8; CMSG_LEN]);
-    // This assume_init looks a bit weird because one might think it
-    // assumes the SockAddr data to be initialized, but that call
-    // refers to the whole array, which itself is made up of MaybeUninit
-    // containers. Their presence protects the SockAddr inside from
-    // being assumed as initialized by the assume_init call.
-    // TODO: Replace this with uninit_array once it becomes MSRV-stable
+
     let addr = socket2::SockAddr::from(transmit.destination);
     let dst_addr = &addr;
-    prepare_msg(&transmit, dst_addr, &mut msg_hdr, &mut iovec, &mut cmsg);
+    prepare_msg(transmit, dst_addr, &mut msg_hdr, &mut iovec, &mut cmsg);
 
     loop {
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) };
@@ -372,11 +371,11 @@ fn send_msg(state: &UdpState, io: SockRef<'_>, transmit: &Transmit) -> io::Resul
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn send(
+fn send<B: AsPtr<u8>>(
     state: &UdpState,
     io: SockRef<'_>,
     last_send_error: &mut Instant,
-    transmits: &[Transmit],
+    transmits: &[Transmit<B>],
 ) -> io::Result<usize> {
     let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
@@ -594,8 +593,8 @@ pub fn udp_state() -> UdpState {
 
 const CMSG_LEN: usize = 88;
 
-fn prepare_msg(
-    transmit: &Transmit,
+fn prepare_msg<B: AsPtr<u8>>(
+    transmit: &Transmit<B>,
     dst_addr: &socket2::SockAddr,
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
