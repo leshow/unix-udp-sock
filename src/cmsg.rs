@@ -167,6 +167,9 @@ pub enum Source {
 pub trait AsPtr<T> {
     fn as_ptr(&self) -> *const T;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl<T> AsPtr<T> for Vec<T> {

@@ -83,24 +83,12 @@ where
                 // Safety: `chunk_mut()` returns a `&mut UninitSlice`, and `UninitSlice` is a
                 // transparent wrapper around `[MaybeUninit<u8>]`.
                 let buf = unsafe { &mut *(pin.rd.chunk_mut() as *mut _ as *mut [MaybeUninit<u8>]) };
-                let mut read = ReadBuf::uninit(buf);
-                let ptr = read.filled().as_ptr();
 
-                let mut iov =
-                    IoSliceMut::new(unsafe { &mut *(read.unfilled_mut() as *mut _ as *mut [u8]) });
+                let mut iov = IoSliceMut::new(unsafe { &mut *(buf as *mut _ as *mut [u8]) });
                 let mut meta = RecvMeta::default();
                 ready!(pin.socket.borrow().poll_recv_msg(cx, &mut iov, &mut meta))?;
 
-                assert_eq!(ptr, read.filled().as_ptr());
-                // let addr = res?;
-                // Safety: We trust `recv` to have filled up `meta.len` bytes in the buffer.
-                unsafe {
-                    read.assume_init(meta.len);
-                }
-                read.advance(meta.len);
-                // Safety: This is guaranteed to be the number of initialized (and read) bytes due
-                // to the invariants provided by `ReadBuf::filled`.
-                unsafe { pin.rd.advance_mut(read.filled().len()) };
+                unsafe { pin.rd.advance_mut(meta.len) };
 
                 meta
             };
