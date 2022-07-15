@@ -14,4 +14,8 @@ libc = "0.2.126"
 socket2 = "0.4"
 tracing = "0.1.35"
 tokio = { version = "1.19", features = ["net"] }
+tokio-util = { version = "0.7.0", features = [ "codec", "net" ] }
 bytes = "1.1.0"
+futures-core = "0.3.0"
+futures-sink = "0.3.0"
+pin-project-lite = "0.2.0"

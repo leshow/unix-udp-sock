@@ -5,17 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::cmsg::{AsPtr, EcnCodepoint, Transmit};
+pub use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
 use tracing::warn;
-
-macro_rules! ready {
-    ($e:expr $(,)?) => {
-        match $e {
-            std::task::Poll::Ready(t) => t,
-            std::task::Poll::Pending => return std::task::Poll::Pending,
-        }
-    };
-}
 
 mod cmsg;
 
@@ -23,6 +14,7 @@ mod cmsg;
 mod imp;
 
 pub use imp::UdpSocket;
+pub mod framed;
 
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
@@ -73,6 +65,7 @@ pub struct RecvMeta {
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
+    pub ifindex: u32,
 }
 
 impl Default for RecvMeta {
@@ -84,6 +77,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            ifindex: 0,
         }
     }
 }

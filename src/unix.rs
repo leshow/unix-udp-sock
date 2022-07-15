@@ -11,8 +11,12 @@ use std::{
 };
 
 use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
+use futures_core::ready;
 use socket2::SockRef;
-use tokio::io::Interest;
+use tokio::{
+    io::{Interest, ReadBuf},
+    net::ToSocketAddrs,
+};
 
 use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 
@@ -21,59 +25,72 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
-    let raw_fd = sock.as_raw_fd();
-    let mut val: libc::c_int = 0;
-    let mut len = mem::size_of::<libc::c_int>() as libc::socklen_t;
-    let res = unsafe {
-        libc::getsockopt(
-            raw_fd,
-            libc::IPPROTO_IPV6,
-            libc::IPV6_V6ONLY,
-            &mut val as *mut _ as *mut _,
-            &mut len,
-        )
-    };
-    match res {
-        -1 => Err(io::Error::last_os_error()),
-        _ => Ok(val != 0),
-    }
-}
-
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
 /// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    // io: AsyncFd<std::net::UdpSocket>,
     io: tokio::net::UdpSocket,
     last_send_error: Instant,
+}
+
+impl AsRawFd for UdpSocket {
+    fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
+        self.io.as_raw_fd()
+    }
 }
 
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
 
-        init(&socket)?;
+        init(SockRef::from(&socket))?;
         let now = Instant::now();
         Ok(UdpSocket {
-            // io: AsyncFd::new(socket)?,
             io: tokio::net::UdpSocket::from_std(socket)?,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
 
-    pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> Result<usize, io::Error> {
+    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> io::Result<UdpSocket> {
+        let io = tokio::net::UdpSocket::bind(addrs).await?;
+        init(SockRef::from(&io))?;
+        let now = Instant::now();
+        Ok(UdpSocket {
+            io,
+            last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
+        })
+    }
+
+    pub fn set_broadcast(&self, broadcast: bool) -> io::Result<()> {
+        self.io.set_broadcast(broadcast)
+    }
+
+    pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> io::Result<()> {
+        self.io.connect(addrs).await
+    }
+
+    pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
         self.io.send_to(buf, target).await
     }
-    pub async fn send(&self, buf: &[u8]) -> Result<usize, io::Error> {
+    pub async fn poll_send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
+        self.io.send_to(buf, target).await
+    }
+    pub async fn send(&self, buf: &[u8]) -> io::Result<usize> {
         self.io.send(buf).await
     }
-    pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), io::Error> {
+    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io.recv_from(buf).await
     }
-    pub async fn recv(&self, buf: &mut [u8]) -> Result<usize, io::Error> {
+    pub fn poll_recv_from(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<SocketAddr>> {
+        self.io.poll_recv_from(cx, buf)
+    }
+    pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.io.recv(buf).await
     }
 
@@ -101,7 +118,7 @@ impl UdpSocket {
         &self,
         state: &UdpState,
         transmits: Transmit<B>,
-    ) -> Result<usize, io::Error> {
+    ) -> io::Result<usize> {
         let n = loop {
             self.io.writable().await?;
             let io = &self.io;
@@ -119,7 +136,7 @@ impl UdpSocket {
         &self,
         bufs: &mut [std::io::IoSliceMut<'_>],
         meta: &mut [RecvMeta],
-    ) -> Result<usize, io::Error> {
+    ) -> io::Result<usize> {
         debug_assert!(!bufs.is_empty());
         loop {
             self.io.readable().await?;
@@ -131,15 +148,17 @@ impl UdpSocket {
         }
     }
 
-    pub async fn recv_msg(&self, buf: IoSliceMut<'_>, meta: RecvMeta) -> Result<usize, io::Error> {
+    pub async fn recv_msg(
+        &self,
+        buf: &mut IoSliceMut<'_>,
+        meta: &mut RecvMeta,
+    ) -> io::Result<usize> {
         debug_assert!(!buf.is_empty());
-        let mut meta = meta;
-        let mut buf = buf;
         loop {
             self.io.readable().await?;
             let io = &self.io;
             match io.try_io(Interest::READABLE, || {
-                recv_msg(SockRef::from(io), &mut buf, &mut meta)
+                recv_msg(SockRef::from(io), buf, meta)
             }) {
                 Ok(res) => return Ok(res),
                 Err(_would_block) => continue,
@@ -152,13 +171,46 @@ impl UdpSocket {
         state: &UdpState,
         cx: &mut Context,
         transmits: &[Transmit<B>],
-    ) -> Poll<Result<usize, io::Error>> {
+    ) -> Poll<io::Result<usize>> {
         loop {
             let last_send_error = &mut self.last_send_error;
             ready!(self.io.poll_send_ready(cx))?;
             let io = &self.io;
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
                 send(state, SockRef::from(io), last_send_error, transmits)
+            }) {
+                return Poll::Ready(Ok(res));
+            }
+        }
+    }
+    pub fn poll_send_msg<B: AsPtr<u8>>(
+        &self,
+        state: &UdpState,
+        cx: &mut Context,
+        transmits: Transmit<B>,
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(self.io.poll_send_ready(cx))?;
+            let io = &self.io;
+            if let Ok(res) = io.try_io(Interest::WRITABLE, || {
+                send_msg(state, SockRef::from(io), &transmits)
+            }) {
+                return Poll::Ready(Ok(res));
+            }
+        }
+    }
+
+    pub fn poll_recv_msg(
+        &self,
+        cx: &mut Context,
+        buf: &mut IoSliceMut<'_>,
+        meta: &mut RecvMeta,
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(self.io.poll_recv_ready(cx))?;
+            let io = &self.io;
+            if let Ok(res) = io.try_io(Interest::READABLE, || {
+                recv_msg(SockRef::from(io), buf, meta)
             }) {
                 return Poll::Ready(Ok(res));
             }
@@ -186,7 +238,7 @@ impl UdpSocket {
     }
 }
 
-fn init(io: &std::net::UdpSocket) -> io::Result<()> {
+fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
@@ -203,10 +255,13 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
         "control message buffers will be misaligned"
     );
 
+    io.set_nonblocking(true)?;
+
     let addr = io.local_addr()?;
+    let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
 
     // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(io)?) {
+    if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -249,7 +304,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        if addr.is_ipv4() {
+        if is_ipv4 {
             let on: libc::c_int = 1;
             let rc = unsafe {
                 libc::setsockopt(
@@ -263,7 +318,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             if rc == -1 {
                 return Err(io::Error::last_os_error());
             }
-        } else if addr.is_ipv6() {
+        } else {
             let rc = unsafe {
                 libc::setsockopt(
                     io.as_raw_fd(),
@@ -292,7 +347,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             }
         }
     }
-    if addr.is_ipv6() {
+    if !is_ipv4 {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -689,6 +744,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    let mut ifindex: u32 = 0;
     #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
 
@@ -713,10 +769,12 @@ fn decode_recv(
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => unsafe {
                 let pktinfo = cmsg::decode::<libc::in_pktinfo>(cmsg);
                 dst_ip = Some(IpAddr::V4(ptr::read(&pktinfo.ipi_addr as *const _ as _)));
+                ifindex = ptr::read(&pktinfo.ipi_ifindex as *const _ as _);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => unsafe {
                 let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
                 dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
+                ifindex = ptr::read(&pktinfo.ipi6_ifindex as *const _ as _);
             },
             #[cfg(target_os = "linux")]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
@@ -738,6 +796,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
+        ifindex,
     }
 }
 
