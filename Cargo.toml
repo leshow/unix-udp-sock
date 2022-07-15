@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/leshow/udp-sock"
 description = "async UDP sockets supporting sendmsg/recvmsg and src IP manipulation"
-keywords = ["udp", "async"]
+keywords = ["udp", "async", "socket", "linux", "unix"]
 categories = ["network-programming", "asynchronous"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
