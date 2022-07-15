@@ -375,7 +375,7 @@ fn send_msg<B: AsPtr<u8>>(
     let mut iovec: libc::iovec = unsafe { mem::zeroed() };
     let mut cmsg = cmsg::Aligned([0u8; CMSG_LEN]);
 
-    let addr = socket2::SockAddr::from(transmit.destination);
+    let addr = socket2::SockAddr::from(transmit.dst);
     let dst_addr = &addr;
     prepare_msg(transmit, dst_addr, &mut msg_hdr, &mut iovec, &mut cmsg);
 
@@ -445,10 +445,7 @@ fn send<B: AsPtr<u8>>(
         unsafe { MaybeUninit::uninit().assume_init() };
     for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
         let dst_addr = unsafe {
-            std::ptr::write(
-                addrs[i].as_mut_ptr(),
-                socket2::SockAddr::from(transmit.destination),
-            );
+            std::ptr::write(addrs[i].as_mut_ptr(), socket2::SockAddr::from(transmit.dst));
             &*addrs[i].as_ptr()
         };
         prepare_msg(
@@ -674,7 +671,7 @@ fn prepare_msg<B: AsPtr<u8>>(
     hdr.msg_controllen = CMSG_LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
-    if transmit.destination.is_ipv4() {
+    if transmit.dst.is_ipv4() {
         encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
     } else {
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
@@ -684,7 +681,7 @@ fn prepare_msg<B: AsPtr<u8>>(
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
 
-    if let Some(ip) = &transmit.src_ip {
+    if let Some(ip) = &transmit.src {
         if cfg!(target_os = "linux") {
             match ip {
                 Source::Ip(IpAddr::V4(v4)) => {

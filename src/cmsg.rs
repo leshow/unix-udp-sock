@@ -143,7 +143,7 @@ impl EcnCodepoint {
 #[derive(Debug)]
 pub struct Transmit<B> {
     /// The socket this datagram should be sent to
-    pub destination: SocketAddr,
+    pub dst: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
@@ -152,7 +152,37 @@ pub struct Transmit<B> {
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,
     /// Optional source IP address for the datagram
-    pub src_ip: Option<Source>,
+    pub src: Option<Source>,
+}
+
+impl<B: AsPtr<u8>> Transmit<B> {
+    pub fn new(dst: SocketAddr, contents: B) -> Self {
+        Self {
+            dst,
+            contents,
+            ecn: None,
+            segment_size: None,
+            src: None,
+        }
+    }
+    pub fn src_ip(self, src_ip: Source) -> Self {
+        Transmit {
+            src: Some(src_ip),
+            ..self
+        }
+    }
+    pub fn segment_size(self, size: usize) -> Self {
+        Transmit {
+            segment_size: Some(size),
+            ..self
+        }
+    }
+    pub fn ecn(self, ecn: EcnCodepoint) -> Self {
+        Transmit {
+            ecn: Some(ecn),
+            ..self
+        }
+    }
 }
 
 /// Select how to set the source IP - using either interface id or the IP itself

@@ -99,6 +99,6 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
         *last_send_error = now;
         warn!(
         "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+            err, transmit.dst, transmit.src, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
 }
