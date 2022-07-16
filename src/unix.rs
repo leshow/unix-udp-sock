@@ -74,11 +74,19 @@ impl UdpSocket {
     pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
         self.io.send_to(buf, target).await
     }
-    pub async fn poll_send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
-        self.io.send_to(buf, target).await
+    pub fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+        target: SocketAddr,
+    ) -> Poll<io::Result<usize>> {
+        self.io.poll_send_to(cx, buf, target)
     }
     pub async fn send(&self, buf: &[u8]) -> io::Result<usize> {
         self.io.send(buf).await
+    }
+    pub async fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        self.io.poll_send(cx, buf)
     }
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io.recv_from(buf).await
@@ -93,7 +101,11 @@ impl UdpSocket {
     pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.io.recv(buf).await
     }
+    pub fn poll_recv(&self, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        self.io.poll_recv(cx, buf)
+    }
 
+    /// async version of `sendmmsg`
     pub async fn send_mmsg<B: AsPtr<u8>>(
         &mut self,
         state: &UdpState,
@@ -114,6 +126,7 @@ impl UdpSocket {
         Ok(n)
     }
 
+    /// async version of `sendmsg`
     pub async fn send_msg<B: AsPtr<u8>>(
         &self,
         state: &UdpState,
@@ -132,6 +145,7 @@ impl UdpSocket {
         Ok(n)
     }
 
+    /// async version of `recvmmsg`
     pub async fn recv_mmsg(
         &self,
         bufs: &mut [std::io::IoSliceMut<'_>],
@@ -148,6 +162,7 @@ impl UdpSocket {
         }
     }
 
+    /// async version of `recvmsg`
     pub async fn recv_msg(
         &self,
         buf: &mut IoSliceMut<'_>,
@@ -166,6 +181,7 @@ impl UdpSocket {
         }
     }
 
+    /// calls `sendmmsg`
     pub fn poll_send_mmsg<B: AsPtr<u8>>(
         &mut self,
         state: &UdpState,
@@ -183,6 +199,7 @@ impl UdpSocket {
             }
         }
     }
+    /// calls `sendmsg`
     pub fn poll_send_msg<B: AsPtr<u8>>(
         &self,
         state: &UdpState,
@@ -200,6 +217,7 @@ impl UdpSocket {
         }
     }
 
+    /// calls `recvmsg`
     pub fn poll_recv_msg(
         &self,
         cx: &mut Context,
@@ -217,6 +235,7 @@ impl UdpSocket {
         }
     }
 
+    /// calls `recvmmsg`
     pub fn poll_recv_mmsg(
         &self,
         cx: &mut Context,
