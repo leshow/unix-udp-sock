@@ -70,8 +70,10 @@ pub struct RecvMeta {
     pub stride: usize,
     /// ECN codepoint
     pub ecn: Option<EcnCodepoint>,
-    /// The destination IP address which was encoded in this datagram
+    /// The destination IP address for this datagram (ipi_addr)
     pub dst_ip: Option<IpAddr>,
+    /// The destination local IP address for this datagram (ipi_spec_dst)
+    pub dst_local_ip: Option<IpAddr>,
     /// interface index that datagram was received on
     pub ifindex: u32,
 }
@@ -85,6 +87,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            dst_local_ip: None,
             ifindex: 0,
         }
     }

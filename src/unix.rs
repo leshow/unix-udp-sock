@@ -812,6 +812,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    let mut dst_local_ip = None;
     let mut ifindex = 0;
     #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
@@ -837,6 +838,9 @@ fn decode_recv(
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => unsafe {
                 let pktinfo = cmsg::decode::<libc::in_pktinfo>(cmsg);
                 dst_ip = Some(IpAddr::V4(ptr::read(&pktinfo.ipi_addr as *const _ as _)));
+                dst_local_ip = Some(IpAddr::V4(ptr::read(
+                    &pktinfo.ipi_spec_dst as *const _ as _,
+                )));
                 ifindex = ptr::read(&pktinfo.ipi_ifindex as *const _ as _);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => unsafe {
@@ -864,6 +868,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
+        dst_local_ip,
         ifindex,
     }
 }
