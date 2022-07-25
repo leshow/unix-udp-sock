@@ -5,7 +5,6 @@ use futures_core::Stream;
 use bytes::{BufMut, BytesMut};
 use futures_core::ready;
 use std::borrow::Borrow;
-use std::mem::MaybeUninit;
 use std::task::{Context, Poll};
 use std::{io::IoSliceMut, pin::Pin};
 
@@ -81,11 +80,9 @@ where
             let meta = {
                 // Safety: `chunk_mut()` returns a `&mut UninitSlice`, and `UninitSlice` is a
                 // transparent wrapper around `[MaybeUninit<u8>]`.
-                let buf = unsafe { &mut *(pin.rd.chunk_mut() as *mut _ as *mut [MaybeUninit<u8>]) };
-
-                let mut iov = IoSliceMut::new(unsafe { &mut *(buf as *mut _ as *mut [u8]) });
-                let mut meta = RecvMeta::default();
-                ready!(pin.socket.borrow().poll_recv_msg(cx, &mut iov, &mut meta))?;
+                let buf = unsafe { &mut *(pin.rd.chunk_mut() as *mut _ as *mut [u8]) };
+                let mut iov = IoSliceMut::new(buf);
+                let meta = ready!(pin.socket.borrow().poll_recv_msg(cx, &mut iov))?;
 
                 unsafe { pin.rd.advance_mut(meta.len) };
 

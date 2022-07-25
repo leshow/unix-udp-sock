@@ -57,6 +57,9 @@ impl Default for UdpState {
     }
 }
 
+/// Metadata about received packet. Includes which address we
+/// recv'd from, how many bytes, ecn codepoints, what the
+/// destination IP used was and what interface index was used.
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
     pub addr: SocketAddr,

@@ -42,6 +42,7 @@ impl AsRawFd for UdpSocket {
 }
 
 impl UdpSocket {
+    /// Creates a new UDP socket from a previously created `std::net::UdpSocket`
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
 
@@ -53,8 +54,9 @@ impl UdpSocket {
         })
     }
 
-    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> io::Result<UdpSocket> {
-        let io = tokio::net::UdpSocket::bind(addrs).await?;
+    /// create a new UDP socket and attempt to bind to `addr`
+    pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<UdpSocket> {
+        let io = tokio::net::UdpSocket::bind(addr).await?;
         init(SockRef::from(&io))?;
         let now = Instant::now();
         Ok(UdpSocket {
@@ -63,6 +65,7 @@ impl UdpSocket {
         })
     }
 
+    /// sets the value of SO_BROADCAST for this socket
     pub fn set_broadcast(&self, broadcast: bool) -> io::Result<()> {
         self.io.set_broadcast(broadcast)
     }
@@ -71,9 +74,21 @@ impl UdpSocket {
         self.io.connect(addrs).await
     }
 
+    /// Sends data on the socket to the given address. On success, returns the
+    /// number of bytes written.
+    ///
+    /// calls underlying tokio [`send_to`]
+    ///
+    /// [`send_to`]: method@tokio::net::UdpSocket::send_to
     pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
         self.io.send_to(buf, target).await
     }
+    /// Sends data on the socket to the given address. On success, returns the
+    /// number of bytes written.
+    ///
+    /// calls underlying tokio [`poll_send_to`]
+    ///
+    /// [`poll_send_to`]: method@tokio::net::UdpSocket::poll_send_to
     pub fn poll_send_to(
         &self,
         cx: &mut Context<'_>,
@@ -82,15 +97,39 @@ impl UdpSocket {
     ) -> Poll<io::Result<usize>> {
         self.io.poll_send_to(cx, buf, target)
     }
+    /// Sends data on the socket to the remote address that the socket is
+    /// connected to.
+    ///
+    /// See tokio [`send`]
+    ///
+    /// [`send`]: method@tokio::net::UdpSocket::send
     pub async fn send(&self, buf: &[u8]) -> io::Result<usize> {
         self.io.send(buf).await
     }
+    /// Sends data on the socket to the remote address that the socket is
+    /// connected to.
+    ///
+    /// See tokio [`poll_send`]
+    ///
+    /// [`poll_send`]: method@tokio::net::UdpSocket::poll_send
     pub async fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         self.io.poll_send(cx, buf)
     }
+    /// Receives a single datagram message on the socket. On success, returns
+    /// the number of bytes read and the origin.
+    ///
+    /// See tokio [`recv_from`]
+    ///
+    /// [`recv_from`]: method@tokio::net::UdpSocket::recv_from
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io.recv_from(buf).await
     }
+    /// Receives a single datagram message on the socket. On success, returns
+    /// the number of bytes read and the origin.
+    ///
+    /// See tokio [`poll_recv_from`]
+    ///
+    /// [`poll_recv_from`]: method@tokio::net::UdpSocket::poll_recv_from
     pub fn poll_recv_from(
         &self,
         cx: &mut Context<'_>,
@@ -98,14 +137,29 @@ impl UdpSocket {
     ) -> Poll<io::Result<SocketAddr>> {
         self.io.poll_recv_from(cx, buf)
     }
+    /// Receives a single datagram message on the socket from the remote address
+    /// to which it is connected. On success, returns the number of bytes read.
+    ///
+    /// See tokio [`recv`]
+    ///
+    /// [`recv`]: method@tokio::net::UdpSocket::recv
     pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.io.recv(buf).await
     }
+    /// Receives a single datagram message on the socket from the remote address
+    /// to which it is connected. On success, returns the number of bytes read.
+    ///
+    /// See tokio [`poll_recv`]
+    ///
+    /// [`poll_recv`]: method@tokio::net::UdpSocket::poll_recv
     pub fn poll_recv(&self, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         self.io.poll_recv(cx, buf)
     }
 
-    /// async version of `sendmmsg`
+    /// Calls syscall [`sendmmsg`]. With a given `state` configured GSO and
+    /// `transmits` with information on the data and metadata about outgoing packets.
+    ///
+    /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
     pub async fn send_mmsg<B: AsPtr<u8>>(
         &mut self,
         state: &UdpState,
@@ -126,7 +180,10 @@ impl UdpSocket {
         Ok(n)
     }
 
-    /// async version of `sendmsg`
+    /// Calls syscall [`sendmsg`]. With a given `state` configured GSO and
+    /// `transmit` with information on the data and metadata about outgoing packet.
+    ///
+    /// [`sendmsg`]: https://linux.die.net/man/2/sendmsg
     pub async fn send_msg<B: AsPtr<u8>>(
         &self,
         state: &UdpState,
@@ -148,7 +205,7 @@ impl UdpSocket {
     /// async version of `recvmmsg`
     pub async fn recv_mmsg(
         &self,
-        bufs: &mut [std::io::IoSliceMut<'_>],
+        bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         debug_assert!(!bufs.is_empty());
@@ -162,19 +219,17 @@ impl UdpSocket {
         }
     }
 
-    /// async version of `recvmsg`
-    pub async fn recv_msg(
-        &self,
-        buf: &mut IoSliceMut<'_>,
-        meta: &mut RecvMeta,
-    ) -> io::Result<usize> {
-        debug_assert!(!buf.is_empty());
+    /// `recv_msg` is similar to `recv_from` but returns extra information
+    /// about the packet in [`RecvMeta`].
+    ///
+    /// [`RecvMeta`]: crate::RecvMeta
+    pub async fn recv_msg(&self, buf: &mut [u8]) -> io::Result<RecvMeta> {
+        let mut iov = IoSliceMut::new(buf);
+        debug_assert!(!iov.is_empty());
         loop {
             self.io.readable().await?;
             let io = &self.io;
-            match io.try_io(Interest::READABLE, || {
-                recv_msg(SockRef::from(io), buf, meta)
-            }) {
+            match io.try_io(Interest::READABLE, || recv_msg(SockRef::from(io), &mut iov)) {
                 Ok(res) => return Ok(res),
                 Err(_would_block) => continue,
             }
@@ -222,14 +277,11 @@ impl UdpSocket {
         &self,
         cx: &mut Context,
         buf: &mut IoSliceMut<'_>,
-        meta: &mut RecvMeta,
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<io::Result<RecvMeta>> {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             let io = &self.io;
-            if let Ok(res) = io.try_io(Interest::READABLE, || {
-                recv_msg(SockRef::from(io), buf, meta)
-            }) {
+            if let Ok(res) = io.try_io(Interest::READABLE, || recv_msg(SockRef::from(io), buf)) {
                 return Poll::Ready(Ok(res));
             }
         }
@@ -252,6 +304,7 @@ impl UdpSocket {
         }
     }
 
+    /// Returns local address this socket is bound to.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
     }
@@ -605,7 +658,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn recv_msg(io: SockRef<'_>, bufs: &mut IoSliceMut<'_>, meta: &mut RecvMeta) -> io::Result<usize> {
+fn recv_msg(io: SockRef<'_>, bufs: &mut IoSliceMut<'_>) -> io::Result<RecvMeta> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
     let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
@@ -626,8 +679,7 @@ fn recv_msg(io: SockRef<'_>, bufs: &mut IoSliceMut<'_>, meta: &mut RecvMeta) -> 
         }
         break n;
     };
-    *meta = decode_recv(&name, &hdr, n as usize);
-    Ok(n as usize)
+    Ok(decode_recv(&name, &hdr, n as usize))
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
