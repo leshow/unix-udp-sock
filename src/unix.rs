@@ -782,6 +782,15 @@ fn prepare_msg<B: AsPtr<u8>>(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
+                Source::InterfaceV6(i, ip) => {
+                    let pktinfo = libc::in6_pktinfo {
+                        ipi6_ifindex: *i,
+                        ipi6_addr: libc::in6_addr {
+                            s6_addr: ip.octets(),
+                        },
+                    };
+                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+                }
             }
         }
     }

@@ -1,6 +1,6 @@
 use std::{
     mem,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     ptr,
 };
 
@@ -192,6 +192,8 @@ pub enum Source {
     Ip(IpAddr),
     /// Set via interface index, ipv4 only
     Interface(u32),
+    /// Set v6 interface index and IP
+    InterfaceV6(u32, Ipv6Addr),
 }
 
 /// A buffer that can be turned into a raw ptr and has a len.
