@@ -194,6 +194,8 @@ pub enum Source {
     Interface(u32),
 }
 
+/// A buffer that can be turned into a raw ptr and has a len.
+/// Is used to be generic over Vec<u8>, [u8], Bytes, BytesMut
 pub trait AsPtr<T> {
     fn as_ptr(&self) -> *const T;
     fn len(&self) -> usize;
@@ -222,7 +224,6 @@ impl<T> AsPtr<T> for [T] {
 impl AsPtr<u8> for BytesMut {
     fn as_ptr(&self) -> *const u8 {
         <[u8]>::as_ptr(self.as_ref())
-        // <[u8]>::as_mut_ptr(self.as_mut())
     }
     fn len(&self) -> usize {
         self.len()

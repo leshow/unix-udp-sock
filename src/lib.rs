@@ -62,12 +62,17 @@ impl Default for UdpState {
 /// destination IP used was and what interface index was used.
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
+    /// address we received datagram on
     pub addr: SocketAddr,
+    /// length of datagram
     pub len: usize,
+    /// received datagram stride
     pub stride: usize,
+    /// ECN codepoint
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
+    /// interface index that datagram was received on
     pub ifindex: u32,
 }
 

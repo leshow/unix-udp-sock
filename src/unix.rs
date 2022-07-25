@@ -812,7 +812,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
-    let mut ifindex: u32 = 0;
+    let mut ifindex = 0;
     #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
 
