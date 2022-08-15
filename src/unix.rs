@@ -73,7 +73,32 @@ impl UdpSocket {
     pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> io::Result<()> {
         self.io.connect(addrs).await
     }
-
+    pub async fn join_multicast_v4(
+        &self,
+        multiaddr: Ipv4Addr,
+        interface: Ipv4Addr,
+    ) -> io::Result<()> {
+        self.io.join_multicast_v4(multiaddr, interface)
+    }
+    pub async fn join_multicast_v6(&self, multiaddr: &Ipv6Addr, interface: u32) -> io::Result<()> {
+        self.io.join_multicast_v6(multiaddr, interface)
+    }
+    pub async fn leave_multicast_v4(
+        &self,
+        multiaddr: Ipv4Addr,
+        interface: Ipv4Addr,
+    ) -> io::Result<()> {
+        self.io.leave_multicast_v4(multiaddr, interface)
+    }
+    pub async fn leave_multicast_v6(&self, multiaddr: &Ipv6Addr, interface: u32) -> io::Result<()> {
+        self.io.leave_multicast_v6(multiaddr, interface)
+    }
+    pub async fn set_multicast_loop_v4(&self, on: bool) -> io::Result<()> {
+        self.io.set_multicast_loop_v4(on)
+    }
+    pub async fn set_multicast_loop_v6(&self, on: bool) -> io::Result<()> {
+        self.io.set_multicast_loop_v6(on)
+    }
     /// Sends data on the socket to the given address. On success, returns the
     /// number of bytes written.
     ///
