@@ -335,6 +335,166 @@ impl UdpSocket {
     }
 }
 
+pub mod sync {
+
+    use super::*;
+
+    #[derive(Debug)]
+    pub struct UdpSocket {
+        io: std::net::UdpSocket,
+        last_send_error: Instant,
+    }
+
+    impl AsRawFd for UdpSocket {
+        fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
+            self.io.as_raw_fd()
+        }
+    }
+
+    impl UdpSocket {
+        /// Creates a new UDP socket from a previously created `std::net::UdpSocket`
+        pub fn from_std(socket: std::net::UdpSocket) -> io::Result<Self> {
+            init(SockRef::from(&socket))?;
+            let now = Instant::now();
+            Ok(Self {
+                io: socket,
+                last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
+            })
+        }
+        /// create a new UDP socket and attempt to bind to `addr`
+        pub fn bind<A: std::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
+            let io = std::net::UdpSocket::bind(addr)?;
+            init(SockRef::from(&io))?;
+            let now = Instant::now();
+            Ok(Self {
+                io,
+                last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
+            })
+        }
+        /// sets the value of SO_BROADCAST for this socket
+        pub fn set_broadcast(&self, broadcast: bool) -> io::Result<()> {
+            self.io.set_broadcast(broadcast)
+        }
+        pub fn connect<A: std::net::ToSocketAddrs>(&self, addrs: A) -> io::Result<()> {
+            self.io.connect(addrs)
+        }
+        pub fn join_multicast_v4(
+            &self,
+            multiaddr: Ipv4Addr,
+            interface: Ipv4Addr,
+        ) -> io::Result<()> {
+            self.io.join_multicast_v4(&multiaddr, &interface)
+        }
+        pub fn join_multicast_v6(&self, multiaddr: &Ipv6Addr, interface: u32) -> io::Result<()> {
+            self.io.join_multicast_v6(multiaddr, interface)
+        }
+        pub fn leave_multicast_v4(
+            &self,
+            multiaddr: Ipv4Addr,
+            interface: Ipv4Addr,
+        ) -> io::Result<()> {
+            self.io.leave_multicast_v4(&multiaddr, &interface)
+        }
+        pub fn leave_multicast_v6(&self, multiaddr: &Ipv6Addr, interface: u32) -> io::Result<()> {
+            self.io.leave_multicast_v6(multiaddr, interface)
+        }
+        pub fn set_multicast_loop_v4(&self, on: bool) -> io::Result<()> {
+            self.io.set_multicast_loop_v4(on)
+        }
+        pub fn set_multicast_loop_v6(&self, on: bool) -> io::Result<()> {
+            self.io.set_multicast_loop_v6(on)
+        }
+        /// Sends data on the socket to the given address. On success, returns the
+        /// number of bytes written.
+        ///
+        /// calls underlying tokio [`send_to`]
+        ///
+        /// [`send_to`]: method@tokio::net::UdpSocket::send_to
+        pub fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
+            self.io.send_to(buf, target)
+        }
+        /// Sends data on the socket to the remote address that the socket is
+        /// connected to.
+        ///
+        /// See tokio [`send`]
+        ///
+        /// [`send`]: method@tokio::net::UdpSocket::send
+        pub fn send(&self, buf: &[u8]) -> io::Result<usize> {
+            self.io.send(buf)
+        }
+        /// Receives a single datagram message on the socket. On success, returns
+        /// the number of bytes read and the origin.
+        ///
+        /// See tokio [`recv_from`]
+        ///
+        /// [`recv_from`]: method@tokio::net::UdpSocket::recv_from
+        pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+            self.io.recv_from(buf)
+        }
+        /// Receives a single datagram message on the socket from the remote address
+        /// to which it is connected. On success, returns the number of bytes read.
+        ///
+        /// See tokio [`recv`]
+        ///
+        /// [`recv`]: method@tokio::net::UdpSocket::recv
+        pub fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
+            self.io.recv(buf)
+        }
+        /// Calls syscall [`sendmmsg`]. With a given `state` configured GSO and
+        /// `transmits` with information on the data and metadata about outgoing packets.
+        ///
+        /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
+        pub fn send_mmsg<B: AsPtr<u8>>(
+            &mut self,
+            state: &UdpState,
+            transmits: &[Transmit<B>],
+        ) -> Result<usize, io::Error> {
+            send(
+                state,
+                SockRef::from(&self.io),
+                &mut self.last_send_error,
+                transmits,
+            )
+        }
+        /// Calls syscall [`sendmsg`]. With a given `state` configured GSO and
+        /// `transmit` with information on the data and metadata about outgoing packet.
+        ///
+        /// [`sendmsg`]: https://linux.die.net/man/2/sendmsg
+        pub fn send_msg<B: AsPtr<u8>>(
+            &self,
+            state: &UdpState,
+            transmits: Transmit<B>,
+        ) -> io::Result<usize> {
+            send_msg(state, SockRef::from(&self.io), &transmits)
+        }
+
+        /// async version of `recvmmsg`
+        pub fn recv_mmsg(
+            &self,
+            bufs: &mut [IoSliceMut<'_>],
+            meta: &mut [RecvMeta],
+        ) -> io::Result<usize> {
+            debug_assert!(!bufs.is_empty());
+            recv(SockRef::from(&self.io), bufs, meta)
+        }
+
+        /// `recv_msg` is similar to `recv_from` but returns extra information
+        /// about the packet in [`RecvMeta`].
+        ///
+        /// [`RecvMeta`]: crate::RecvMeta
+        pub fn recv_msg(&self, buf: &mut [u8]) -> io::Result<RecvMeta> {
+            let mut iov = IoSliceMut::new(buf);
+            debug_assert!(!iov.is_empty());
+
+            recv_msg(SockRef::from(&self.io), &mut iov)
+        }
+        /// Returns local address this socket is bound to.
+        pub fn local_addr(&self) -> io::Result<SocketAddr> {
+            self.io.local_addr()
+        }
+    }
+}
+
 fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
