@@ -1,6 +1,6 @@
 # unix-udp-sock
 
-Largely based on `quinn-udp`, this adds support additional syscalls:
+Largely based on `quinn-udp`, this adds async & sync support for additional syscalls:
 
 UDP socket send:
 
