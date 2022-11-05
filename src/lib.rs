@@ -13,7 +13,7 @@ mod cmsg;
 #[path = "unix.rs"]
 mod imp;
 
-pub use imp::UdpSocket;
+pub use imp::{sync, UdpSocket};
 pub mod framed;
 
 /// Number of UDP packets to send/receive at a time
