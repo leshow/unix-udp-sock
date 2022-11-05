@@ -54,6 +54,10 @@ impl UdpSocket {
         })
     }
 
+    pub fn into_std(self) -> io::Result<std::net::UdpSocket> {
+        self.io.into_std()
+    }
+
     /// create a new UDP socket and attempt to bind to `addr`
     pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<UdpSocket> {
         let io = tokio::net::UdpSocket::bind(addr).await?;
@@ -337,6 +341,8 @@ impl UdpSocket {
 
 pub mod sync {
 
+    use std::os::unix::prelude::IntoRawFd;
+
     use super::*;
 
     #[derive(Debug)]
@@ -348,6 +354,11 @@ pub mod sync {
     impl AsRawFd for UdpSocket {
         fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
             self.io.as_raw_fd()
+        }
+    }
+    impl IntoRawFd for UdpSocket {
+        fn into_raw_fd(self) -> std::os::unix::prelude::RawFd {
+            self.io.into_raw_fd()
         }
     }
 
@@ -370,6 +381,10 @@ pub mod sync {
                 io,
                 last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
             })
+        }
+        /// sets nonblocking mode
+        pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+            self.io.set_nonblocking(nonblocking)
         }
         /// sets the value of SO_BROADCAST for this socket
         pub fn set_broadcast(&self, broadcast: bool) -> io::Result<()> {
