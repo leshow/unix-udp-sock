@@ -206,23 +206,44 @@ pub trait AsPtr<T> {
     }
 }
 
+impl<T, const N: usize> AsPtr<T> for &[T; N] {
+    fn as_ptr(&self) -> *const T {
+        self.as_slice().as_ptr()
+    }
+
+    fn len(&self) -> usize {
+        N
+    }
+}
+
+impl<T, const N: usize> AsPtr<T> for [T; N] {
+    fn as_ptr(&self) -> *const T {
+        self.as_slice().as_ptr()
+    }
+
+    fn len(&self) -> usize {
+        N
+    }
+}
+
 impl<T> AsPtr<T> for Vec<T> {
     fn as_ptr(&self) -> *const T {
-        self.as_ptr()
+        <Vec<T>>::as_ptr(self)
     }
     fn len(&self) -> usize {
-        self.len()
+        <Vec<T>>::len(self)
     }
 }
 
 impl<T> AsPtr<T> for [T] {
     fn as_ptr(&self) -> *const T {
-        self.as_ptr()
+        <[T]>::as_ptr(self)
     }
     fn len(&self) -> usize {
-        self.len()
+        <[T]>::len(self)
     }
 }
+
 impl AsPtr<u8> for BytesMut {
     fn as_ptr(&self) -> *const u8 {
         <[u8]>::as_ptr(self.as_ref())

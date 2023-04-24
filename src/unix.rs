@@ -366,6 +366,7 @@ pub mod sync {
         /// Creates a new UDP socket from a previously created `std::net::UdpSocket`
         pub fn from_std(socket: std::net::UdpSocket) -> io::Result<Self> {
             init(SockRef::from(&socket))?;
+            socket.set_nonblocking(false)?;
             let now = Instant::now();
             Ok(Self {
                 io: socket,
@@ -376,6 +377,7 @@ pub mod sync {
         pub fn bind<A: std::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
             let io = std::net::UdpSocket::bind(addr)?;
             init(SockRef::from(&io))?;
+            io.set_nonblocking(false)?;
             let now = Instant::now();
             Ok(Self {
                 io,
@@ -510,9 +512,34 @@ pub mod sync {
     }
 }
 
+fn set_socket_option<Fd: AsRawFd>(
+    socket: &Fd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) -> Result<(), io::Error> {
+    let rc = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            name,
+            &value as *const _ as _,
+            mem::size_of_val(&value) as _,
+        )
+    };
+
+    if rc != -1 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+const OPTION_ON: libc::c_int = 1;
+
 fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
         cmsg_platform_space +=
             unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
     }
@@ -534,105 +561,53 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
 
     // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
     if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_RECVTOS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)?;
     }
     #[cfg(target_os = "linux")]
     {
         // opportunistically try to enable GRO. See gro::gro_segments().
-        let on: libc::c_int = 1;
-        unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_GRO,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
+        let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
 
         // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_MTU_DISCOVER,
-                &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_socket_option(
+            &*io,
+            libc::IPPROTO_IP,
+            libc::IP_MTU_DISCOVER,
+            libc::IP_PMTUDISC_PROBE,
+        )?;
 
         if is_ipv4 {
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IP,
-                    libc::IP_PKTINFO,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
         } else {
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_MTU_DISCOVER,
-                    &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                    mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_RECVPKTINFO,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_MTU_DISCOVER,
+                libc::IP_PMTUDISC_PROBE,
+            )?;
         }
     }
-    if !is_ipv4 {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVTCLASS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
+    #[cfg(any(target_os = "macos"))]
+    {
+        if is_ipv4 {
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
         }
+    }
+    #[cfg(any(target_os = "freebsd"))]
+    // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
+    // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
+    // macOS also supports IP_PKTINFO
+    {
+        if is_ipv4 {
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVDSTADDR, OPTION_ON)?;
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVIF, OPTION_ON)?;
+        }
+    }
+
+    // IPV6_RECVPKTINFO is standardized
+    if !is_ipv4 {
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
     }
     Ok(())
 }
@@ -778,18 +753,57 @@ fn send<B: AsPtr<u8>>(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn send(
+fn send_msg<B: AsPtr<u8>>(
+    _state: &UdpState,
+    io: SockRef<'_>,
+    transmit: &Transmit<B>,
+) -> io::Result<usize> {
+    let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+    let mut iov: libc::iovec = unsafe { mem::zeroed() };
+    let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
+
+    let addr = socket2::SockAddr::from(transmit.dst);
+    let dst_addr = &addr;
+    prepare_msg(transmit, dst_addr, &mut hdr, &mut iov, &mut ctrl);
+
+    loop {
+        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // Other errors are ignored, since they will ususally be handled
+                    // by higher level retransmits and timeouts.
+                    // - PermissionDenied errors have been observed due to iptable rules.
+                    //   Those are not fatal errors, since the
+                    //   configuration can be dynamically changed.
+                    // - Destination unreachable errors have been observed for other
+                    return Ok(n as usize);
+                }
+            }
+        }
+        return Ok(n as usize);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn send<B: AsPtr<u8>>(
     _state: &UdpState,
     io: SockRef<'_>,
     last_send_error: &mut Instant,
-    transmits: &[Transmit],
+    transmits: &[Transmit<B>],
 ) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
     let mut sent = 0;
     while sent < transmits.len() {
-        let addr = socket2::SockAddr::from(transmits[sent].destination);
+        let addr = socket2::SockAddr::from(transmits[sent].dst);
         prepare_msg(&transmits[sent], &addr, &mut hdr, &mut iov, &mut ctrl);
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
         if n == -1 {
@@ -906,6 +920,29 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(1)
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn recv_msg(io: SockRef<'_>, bufs: &mut IoSliceMut<'_>) -> io::Result<RecvMeta> {
+    let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+    let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+    prepare_recv(bufs, &mut name, &mut ctrl, &mut hdr);
+    let n = loop {
+        let n = unsafe { libc::recvmsg(io.as_raw_fd(), &mut hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+            continue;
+        }
+        break n;
+    };
+    Ok(decode_recv(&name, &hdr, n as usize))
+}
+
 /// Returns the platforms UDP socket capabilities
 pub fn udp_state() -> UdpState {
     UdpState {
@@ -953,9 +990,10 @@ fn prepare_msg<B: AsPtr<u8>>(
     }
 
     if let Some(ip) = &transmit.src {
-        if cfg!(target_os = "linux") {
-            match ip {
-                Source::Ip(IpAddr::V4(v4)) => {
+        match ip {
+            Source::Ip(IpAddr::V4(v4)) => {
+                #[cfg(target_os = "linux")]
+                {
                     let pktinfo = libc::in_pktinfo {
                         ipi_ifindex: 0,
                         ipi_spec_dst: libc::in_addr {
@@ -965,32 +1003,39 @@ fn prepare_msg<B: AsPtr<u8>>(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                Source::Ip(IpAddr::V6(v6)) => {
-                    let pktinfo = libc::in6_pktinfo {
-                        ipi6_ifindex: 0,
-                        ipi6_addr: libc::in6_addr {
-                            s6_addr: v6.octets(),
-                        },
+                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                {
+                    let addr = libc::in_addr {
+                        s_addr: u32::from_ne_bytes(v4.octets()),
                     };
-                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+                    encoder.push(libc::IPPROTO_IP, libc::IP_RECVDSTADDR, addr);
                 }
-                Source::Interface(i) => {
-                    let pktinfo = libc::in_pktinfo {
-                        ipi_ifindex: *i as i32,
-                        ipi_spec_dst: libc::in_addr { s_addr: 0 },
-                        ipi_addr: libc::in_addr { s_addr: 0 },
-                    };
-                    encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
-                }
-                Source::InterfaceV6(i, ip) => {
-                    let pktinfo = libc::in6_pktinfo {
-                        ipi6_ifindex: *i,
-                        ipi6_addr: libc::in6_addr {
-                            s6_addr: ip.octets(),
-                        },
-                    };
-                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
-                }
+            }
+            Source::Ip(IpAddr::V6(v6)) => {
+                let pktinfo = libc::in6_pktinfo {
+                    ipi6_ifindex: 0,
+                    ipi6_addr: libc::in6_addr {
+                        s6_addr: v6.octets(),
+                    },
+                };
+                encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+            }
+            Source::Interface(i) => {
+                let pktinfo = libc::in_pktinfo {
+                    ipi_ifindex: *i as _, // i32 linux, u32 mac
+                    ipi_spec_dst: libc::in_addr { s_addr: 0 },
+                    ipi_addr: libc::in_addr { s_addr: 0 },
+                };
+                encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
+            }
+            Source::InterfaceV6(i, ip) => {
+                let pktinfo = libc::in6_pktinfo {
+                    ipi6_ifindex: *i,
+                    ipi6_addr: libc::in6_addr {
+                        s6_addr: ip.octets(),
+                    },
+                };
+                encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
             }
         }
     }
@@ -1059,6 +1104,12 @@ fn decode_recv(
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
                 ifindex = pktinfo.ipi6_ifindex;
             }
+            // freebsd doesn't have PKTINFO
+            #[cfg(target_os = "freebsd")]
+            (libc::IPPROTO_IP, libc::IP_RECVIF) => {
+                let info = unsafe { cmsg::decode::<libc::sockaddr_dl>(cmsg) };
+                ifindex = info.sdl_index as _;
+            }
             #[cfg(target_os = "linux")]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
                 stride = cmsg::decode::<libc::c_int>(cmsg) as usize;
@@ -1117,27 +1168,18 @@ mod gso {
     pub fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
-        let socket = match std::net::UdpSocket::bind("[::]:0") {
+        let socket = match std::net::UdpSocket::bind("[::]:0")
+            .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+        {
             Ok(socket) => socket,
             Err(_) => return 1,
         };
 
-        let rc = unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_SEGMENT,
-                &GSO_SIZE as *const _ as _,
-                mem::size_of_val(&GSO_SIZE) as _,
-            )
-        };
-
-        if rc != -1 {
-            // As defined in linux/udp.h
-            // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-            64
-        } else {
-            1
+        // As defined in linux/udp.h
+        // #define UDP_MAX_SEGMENTS        (1 << 6UL)
+        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
+            Ok(()) => 64,
+            Err(_) => 1,
         }
     }
 

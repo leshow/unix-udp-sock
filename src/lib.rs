@@ -113,3 +113,62 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
             err, transmit.dst, transmit.src, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create() {
+        let s = sync::UdpSocket::bind("0.0.0.0:9909");
+        assert!(s.is_ok());
+    }
+    #[test]
+    fn test_send_recv() {
+        let saddr = "0.0.0.0:9901".parse().unwrap();
+        let a = sync::UdpSocket::bind(saddr).unwrap();
+        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let buf = b"hello world";
+        b.send_to(&buf[..], saddr).unwrap();
+        // recv
+        let mut r = [0; 1024];
+        a.recv_from(&mut r).unwrap();
+        assert_eq!(buf[..], r[..11]);
+    }
+    #[test]
+    fn test_send_recv_msg() {
+        let saddr = "0.0.0.0:9901".parse().unwrap();
+        let a = sync::UdpSocket::bind(saddr).unwrap();
+        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let send_addr = b.local_addr().unwrap().ip();
+        let buf = b"hello world";
+        // let src = Source::Interface(1);
+        let tr = Transmit::new(saddr, *buf);
+        b.send_msg(&UdpState::new(), tr).unwrap();
+        // recv
+        let mut r = [0; 1024];
+        let meta = a.recv_msg(&mut r).unwrap();
+        assert_eq!(buf[..], r[..11]);
+        // dst addr and b addr matches!
+        assert_eq!(meta.dst_local_ip, Some(send_addr));
+    }
+    // #[test]
+    // fn test_send_recv_msg_if() {
+    //     let addrs: Vec<_> = nix::ifaddrs::getifaddrs().unwrap().collect();
+    //     dbg!(addrs);
+    //     let saddr = "0.0.0.0:9901".parse().unwrap();
+    //     let a = sync::UdpSocket::bind(saddr).unwrap();
+    //     let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+    //     let send_addr = b.local_addr().unwrap().ip();
+    //     let buf = b"hello world";
+    //     // let src = Source::Interface(1);
+    //     let tr = Transmit::new(saddr, *buf);
+    //     b.send_msg(&UdpState::new(), tr).unwrap();
+    //     // recv
+    //     let mut r = [0; 1024];
+    //     let meta = a.recv_msg(&mut r).unwrap();
+    //     assert_eq!(buf[..], r[..11]);
+    //     // dst addr and b addr matches!
+    //     assert_eq!(meta.dst_local_ip, Some(send_addr));
+    // }
+}
