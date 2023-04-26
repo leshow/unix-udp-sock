@@ -113,3 +113,53 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
             err, transmit.dst, transmit.src, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    #[test]
+    fn test_create() {
+        let s = sync::UdpSocket::bind("0.0.0.0:9909");
+        assert!(s.is_ok());
+    }
+    #[test]
+    fn test_send_recv() {
+        let saddr = "0.0.0.0:9901".parse().unwrap();
+        let a = sync::UdpSocket::bind(saddr).unwrap();
+        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let buf = b"hello world";
+        b.send_to(&buf[..], saddr).unwrap();
+        // recv
+        let mut r = [0; 1024];
+        a.recv_from(&mut r).unwrap();
+        assert_eq!(buf[..], r[..11]);
+    }
+    #[test]
+    fn test_send_recv_msg() {
+        let saddr = "0.0.0.0:9902".parse().unwrap();
+        let a = sync::UdpSocket::bind(saddr).unwrap();
+        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let send_port = b.local_addr().unwrap().port();
+        let send_addr = b.local_addr().unwrap().ip();
+        let buf = b"hello world";
+        let src = Source::Interface(1);
+        let tr = Transmit::new(saddr, *buf).src_ip(src);
+        b.send_msg(&UdpState::new(), tr).unwrap();
+        // recv
+        let mut r = [0; 1024];
+        let meta = a.recv_msg(&mut r).unwrap();
+        assert_eq!(buf[..], r[..11]);
+        // dst addr and b addr matches!
+        // meta.ifindex
+        assert_eq!(send_port, meta.addr.port());
+        assert_eq!(meta.ifindex, 1);
+        assert!(matches!(
+            meta.dst_local_ip,
+            // dst_local_ip might be 127.0.0.1
+            Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
+        ));
+    }
+}

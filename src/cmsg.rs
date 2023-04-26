@@ -38,6 +38,7 @@ impl<'a> Encoder<'a> {
     /// # Panics
     /// - If insufficient buffer space remains.
     /// - If `T` has stricter alignment requirements than `cmsghdr`
+    #[allow(clippy::unnecessary_cast)]
     pub fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
         let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
@@ -75,6 +76,7 @@ impl<'a> Drop for Encoder<'a> {
 /// # Safety
 ///
 /// `cmsg` must refer to a cmsg containing a payload of type `T`
+#[allow(clippy::unnecessary_cast)]
 pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
     debug_assert_eq!(
@@ -206,23 +208,44 @@ pub trait AsPtr<T> {
     }
 }
 
+impl<T, const N: usize> AsPtr<T> for &[T; N] {
+    fn as_ptr(&self) -> *const T {
+        self.as_slice().as_ptr()
+    }
+
+    fn len(&self) -> usize {
+        N
+    }
+}
+
+impl<T, const N: usize> AsPtr<T> for [T; N] {
+    fn as_ptr(&self) -> *const T {
+        self.as_slice().as_ptr()
+    }
+
+    fn len(&self) -> usize {
+        N
+    }
+}
+
 impl<T> AsPtr<T> for Vec<T> {
     fn as_ptr(&self) -> *const T {
-        self.as_ptr()
+        <Vec<T>>::as_ptr(self)
     }
     fn len(&self) -> usize {
-        self.len()
+        <Vec<T>>::len(self)
     }
 }
 
 impl<T> AsPtr<T> for [T] {
     fn as_ptr(&self) -> *const T {
-        self.as_ptr()
+        <[T]>::as_ptr(self)
     }
     fn len(&self) -> usize {
-        self.len()
+        <[T]>::len(self)
     }
 }
+
 impl AsPtr<u8> for BytesMut {
     fn as_ptr(&self) -> *const u8 {
         <[u8]>::as_ptr(self.as_ref())
