@@ -76,6 +76,29 @@ jobs:
           command: test
           args: --all-features
 
+  test-mac:
+    name: Test Suite (macOS)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest

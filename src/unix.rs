@@ -1,10 +1,10 @@
+#![allow(clippy::unnecessary_cast)]
 use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    ptr,
     sync::atomic::AtomicUsize,
     task::{Context, Poll},
     time::Instant,
@@ -587,13 +587,13 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             )?;
         }
     }
-    #[cfg(any(target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     {
         if is_ipv4 {
             set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
         }
     }
-    #[cfg(any(target_os = "freebsd"))]
+    #[cfg(target_os = "freebsd")]
     // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
     // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
     // macOS also supports IP_PKTINFO
@@ -679,6 +679,8 @@ fn send<B: AsPtr<u8>>(
     last_send_error: &mut Instant,
     transmits: &[Transmit<B>],
 ) -> io::Result<usize> {
+    use std::ptr;
+
     let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
@@ -692,7 +694,7 @@ fn send<B: AsPtr<u8>>(
         unsafe { MaybeUninit::uninit().assume_init() };
     for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
         let dst_addr = unsafe {
-            std::ptr::write(addrs[i].as_mut_ptr(), socket2::SockAddr::from(transmit.dst));
+            ptr::write(addrs[i].as_mut_ptr(), socket2::SockAddr::from(transmit.dst));
             &*addrs[i].as_ptr()
         };
         prepare_msg(
@@ -834,6 +836,8 @@ fn send<B: AsPtr<u8>>(
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+    use std::ptr;
+
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
     let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
