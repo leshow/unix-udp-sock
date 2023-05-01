@@ -996,7 +996,7 @@ fn prepare_msg<B: AsPtr<u8>>(
     if let Some(ip) = &transmit.src {
         match ip {
             Source::Ip(IpAddr::V4(v4)) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
                     let pktinfo = libc::in_pktinfo {
                         ipi_ifindex: 0,
@@ -1007,7 +1007,7 @@ fn prepare_msg<B: AsPtr<u8>>(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                #[cfg(target_os = "freebsd")]
                 {
                     let addr = libc::in_addr {
                         s_addr: u32::from_ne_bytes(v4.octets()),
