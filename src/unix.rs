@@ -1,10 +1,9 @@
 #![allow(clippy::unnecessary_cast)]
 use std::{
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    os::unix::io::AsRawFd,
+    os::{fd::AsFd, unix::io::AsRawFd},
     sync::atomic::AtomicUsize,
     task::{Context, Poll},
     time::Instant,
@@ -38,6 +37,12 @@ pub struct UdpSocket {
 impl AsRawFd for UdpSocket {
     fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
         self.io.as_raw_fd()
+    }
+}
+
+impl AsFd for UdpSocket {
+    fn as_fd(&self) -> std::os::unix::prelude::BorrowedFd<'_> {
+        self.io.as_fd()
     }
 }
 
