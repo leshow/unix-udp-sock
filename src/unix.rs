@@ -116,6 +116,17 @@ impl UdpSocket {
         self.io.set_broadcast(broadcast)
     }
 
+    /// Opportunistically try to enable GRO support for this socket. This is
+    /// only supported on Linux platforms.
+    #[cfg(target_os = "linux")]
+    pub fn set_gro(&self, enable: bool) -> io::Result<()> {
+        // See gro::gro_segments().
+        const OPTION_OFF: libc::c_int = 0;
+
+        let value = if enable { OPTION_ON } else { OPTION_OFF };
+        set_socket_option(&self.io, libc::SOL_UDP, libc::UDP_GRO, value)
+    }
+
     pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> io::Result<()> {
         self.io.connect(addrs).await
     }
@@ -609,9 +620,6 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        // opportunistically try to enable GRO. See gro::gro_segments().
-        let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
-
         // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
         set_socket_option(
             &*io,
