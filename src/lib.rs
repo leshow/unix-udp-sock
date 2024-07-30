@@ -16,8 +16,17 @@ mod imp;
 pub use imp::{sync, UdpSocket};
 pub mod framed;
 
-/// Number of UDP packets to send/receive at a time
-pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
+/// Maximum number of UDP packets that can be sent by the `sendmmsg`/`recvmmsg`
+/// wrappers.  Note that, for supported platforms, the OS caps the batch size at
+/// this value, but will not return an error, so this is just a suggested
+/// maximum.
+///
+/// Presently, this is 1024 on Linux an FreeBS, and 1 on platforms that don't
+/// support `sendmmsg`/`recvmmsg`
+pub const BATCH_SIZE_CAP: usize = imp::BATCH_SIZE_CAP;
+
+/// Default number of UDP packets to send/receive at a time.
+pub const DEFAULT_BATCH_SIZE: usize = imp::DEFAULT_BATCH_SIZE;
 
 /// The capabilities a UDP socket suppports on a certain platform
 #[derive(Debug)]
