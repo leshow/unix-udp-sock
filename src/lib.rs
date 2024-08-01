@@ -21,7 +21,7 @@ pub mod framed;
 /// this value, but will not return an error, so this is just a suggested
 /// maximum.
 ///
-/// Presently, this is 1024 on Linux an FreeBS, and 1 on platforms that don't
+/// Presently, this is 1024 on Linux and FreeBSD, and 1 on platforms that don't
 /// support `sendmmsg`/`recvmmsg`
 pub const BATCH_SIZE_CAP: usize = imp::BATCH_SIZE_CAP;
 
