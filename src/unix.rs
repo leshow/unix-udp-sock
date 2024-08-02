@@ -275,7 +275,7 @@ impl UdpSocket {
         state: &UdpState,
         transmits: &[Transmit<B>],
     ) -> Result<usize, io::Error> {
-        self.send_mmsg_with_batch_size::<_, DEFAULT_BATCH_SIZE>(state, transmits)
+        self.send_mmsg_with_batch_size::<DEFAULT_BATCH_SIZE>(state, transmits)
             .await
     }
 
@@ -288,17 +288,17 @@ impl UdpSocket {
     /// sent, regardless of the specified `BATCH_SIZE`
     ///
     /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
-    pub async fn send_mmsg_with_batch_size<B: AsPtr<u8>, const BATCH_SIZE: usize>(
+    pub async fn send_mmsg_with_batch_size<const BATCH_SIZE: usize>(
         &self,
         state: &UdpState,
-        transmits: &[Transmit<B>],
+        transmits: &[Transmit<impl AsPtr<u8>>],
     ) -> Result<usize, io::Error> {
         let n = loop {
             self.io.writable().await?;
             let last_send_error = self.last_send_error.clone();
             let io = &self.io;
             match io.try_io(Interest::WRITABLE, || {
-                send::<_, BATCH_SIZE>(state, SockRef::from(io), last_send_error, transmits)
+                send::<BATCH_SIZE>(state, SockRef::from(io), last_send_error, transmits)
             }) {
                 Ok(res) => break res,
                 Err(_would_block) => continue,
@@ -382,21 +382,21 @@ impl UdpSocket {
         cx: &mut Context,
         transmits: &[Transmit<B>],
     ) -> Poll<io::Result<usize>> {
-        self.poll_send_mmsg_with_batch_size::<_, DEFAULT_BATCH_SIZE>(state, cx, transmits)
+        self.poll_send_mmsg_with_batch_size::<DEFAULT_BATCH_SIZE>(state, cx, transmits)
     }
 
     /// calls `sendmmsg`
-    pub fn poll_send_mmsg_with_batch_size<B: AsPtr<u8>, const BATCH_SIZE: usize>(
+    pub fn poll_send_mmsg_with_batch_size<const BATCH_SIZE: usize>(
         &mut self,
         state: &UdpState,
         cx: &mut Context,
-        transmits: &[Transmit<B>],
+        transmits: &[Transmit<impl AsPtr<u8>>],
     ) -> Poll<io::Result<usize>> {
         loop {
             ready!(self.io.poll_send_ready(cx))?;
             let io = &self.io;
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                send::<_, BATCH_SIZE>(
+                send::<BATCH_SIZE>(
                     state,
                     SockRef::from(io),
                     self.last_send_error.clone(),
@@ -608,7 +608,7 @@ pub mod sync {
             state: &UdpState,
             transmits: &[Transmit<B>],
         ) -> Result<usize, io::Error> {
-            self.send_mmsg_with_batch_size::<_, DEFAULT_BATCH_SIZE>(state, transmits)
+            self.send_mmsg_with_batch_size::<DEFAULT_BATCH_SIZE>(state, transmits)
         }
 
         /// Calls syscall [`sendmmsg`]. With a given `state` configured GSO and
@@ -620,12 +620,12 @@ pub mod sync {
         /// will be sent, regardless of the specified `BATCH_SIZE`
         ///
         /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
-        pub fn send_mmsg_with_batch_size<B: AsPtr<u8>, const BATCH_SIZE: usize>(
+        pub fn send_mmsg_with_batch_size<const BATCH_SIZE: usize>(
             &mut self,
             state: &UdpState,
-            transmits: &[Transmit<B>],
+            transmits: &[Transmit<impl AsPtr<u8>>],
         ) -> Result<usize, io::Error> {
-            send::<_, BATCH_SIZE>(
+            send::<BATCH_SIZE>(
                 state,
                 SockRef::from(&self.io),
                 self.last_send_error.clone(),
@@ -840,12 +840,12 @@ fn send_msg<B: AsPtr<u8>>(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn send<B: AsPtr<u8>, const BATCH_SIZE: usize>(
+fn send<const BATCH_SIZE: usize>(
     // `state` is not presently used on FreeBSD
     #[allow(unused_variables)] state: &UdpState,
     io: SockRef<'_>,
     last_send_error: LastSendError,
-    transmits: &[Transmit<B>],
+    transmits: &[Transmit<impl AsPtr<u8>>],
 ) -> io::Result<usize> {
     use std::ptr;
 
@@ -966,11 +966,11 @@ fn send_msg<B: AsPtr<u8>>(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn send<B: AsPtr<u8>, const BATCH_SIZE: usize>(
+fn send<const BATCH_SIZE: usize>(
     _state: &UdpState,
     io: SockRef<'_>,
     last_send_error: LastSendError,
-    transmits: &[Transmit<B>],
+    transmits: &[Transmit<impl AsPtr<u8>>],
 ) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
