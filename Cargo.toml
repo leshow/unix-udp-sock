@@ -19,6 +19,3 @@ bytes = "1.11.1"
 futures-core = "0.3.32"
 pin-project-lite = "0.2.16"
 atomic-time = "0.1.5"
-
-# [dev-dependencies]
-# nix = "0.26"

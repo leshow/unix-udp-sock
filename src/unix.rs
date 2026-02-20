@@ -1444,3 +1444,45 @@ mod gro {
         1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_last_send_error() {
+        let error = LastSendError::default();
+        // First call should return true
+        assert!(error.should_log(), "First call should allow logging");
+
+        // Immediate second call false (not enough time passed)
+        assert!(!error.should_log(), "Second call should not allow logging");
+    }
+
+    #[test]
+    fn test_last_send_error_threads() {
+        use std::{sync::Arc, thread};
+
+        // Test that only one thread wins the race when multiple threads
+        // call should_log() simultaneously
+        let error = Arc::new(LastSendError::default());
+
+        // Spawn multiple threads that all try to log at once
+        let handles = (0..10)
+            .map(|_| {
+                let error = Arc::clone(&error);
+                thread::spawn(move || error.should_log())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|&x| x)
+                .count(),
+            1,
+            "one thread should win the race"
+        );
+    }
+}
