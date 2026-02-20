@@ -114,15 +114,33 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-/// Explicit congestion notification codepoint
+/// Explicit Congestion Notification (ECN) codepoint.
+///
+/// ECN allows routers to signal congestion without dropping packets.
+/// Used for congestion control in protocols like QUIC.
+///
+/// # Variants
+///
+/// - `Ect0`: ECN Capable Transport (0) - Indicates ECN support
+/// - `Ect1`: ECN Capable Transport (1) - Alternative ECN marking
+/// - `Ce`: Congestion Experienced - Router has experienced congestion
+///
+/// # Example
+///
+/// ```
+/// use unix_udp_sock::EcnCodepoint;
+///
+/// let ecn = EcnCodepoint::from_bits(0b10);
+/// assert_eq!(ecn, Some(EcnCodepoint::Ect0));
+/// ```
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EcnCodepoint {
-    #[doc(hidden)]
+    /// ECN Capable Transport (0)
     Ect0 = 0b10,
-    #[doc(hidden)]
+    /// ECN Capable Transport (1)
     Ect1 = 0b01,
-    #[doc(hidden)]
+    /// Congestion Experienced
     Ce = 0b11,
 }
 
@@ -141,19 +159,49 @@ impl EcnCodepoint {
     }
 }
 
-/// An outgoing packet
+/// Describes an outgoing UDP datagram with optional metadata.
+///
+/// Used with [`send_msg`](crate::UdpSocket::send_msg) and
+/// [`send_mmsg`](crate::UdpSocket::send_mmsg) to send datagrams with
+/// additional control information like ECN marking, source IP, or GSO.
+///
+/// # Example
+///
+/// ```
+/// use unix_udp_sock::{Transmit, Source, EcnCodepoint};
+///
+/// let dest = "127.0.0.1:8080".parse().unwrap();
+/// let data = b"hello world";
+///
+/// // Basic transmit
+/// let tx = Transmit::new(dest, *data);
+///
+/// // With source IP
+/// let tx = Transmit::new(dest, *data)
+///     .src_ip(Source::Ip("192.168.1.100".parse().unwrap()));
+///
+/// // With ECN marking
+/// let tx = Transmit::new(dest, *data)
+///     .ecn(EcnCodepoint::Ect0);
+///
+/// // With GSO (Generic Segmentation Offload) - Linux only
+/// let large_data = vec![0u8; 4096];
+/// let tx = Transmit::new(dest, large_data)
+///     .segment_size(1200);  // Kernel will split into 1200-byte segments
+/// ```
 #[derive(Debug)]
 pub struct Transmit<B> {
-    /// The socket this datagram should be sent to
+    /// The destination socket address for this datagram
     pub dst: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
     pub contents: B,
-    /// The segment size if this transmission contains multiple datagrams.
-    /// This is `None` if the transmit only contains a single datagram
+    /// Segment size for GSO (Generic Segmentation Offload).
+    /// When set, the kernel splits `contents` into multiple datagrams of this size.
+    /// Only supported on Linux.
     pub segment_size: Option<usize>,
-    /// Optional source IP address for the datagram
+    /// Optional source IP address or interface for this datagram
     pub src: Option<Source>,
 }
 
@@ -190,7 +238,7 @@ impl<B: AsPtr<u8>> Transmit<B> {
 /// Select how to set the source IP - using either interface id or the IP itself
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub enum Source {
-    /// Set source IP explicitly by IP
+    /// Set the source IP address explicitly
     Ip(IpAddr),
     /// Set via interface index, ipv4 only
     Interface(u32),
@@ -199,7 +247,7 @@ pub enum Source {
 }
 
 /// A buffer that can be turned into a raw ptr and has a len.
-/// Is used to be generic over Vec<u8>, [u8], Bytes, BytesMut
+/// Is used to be generic over `Vec<u8>`, `[u8]`, `Bytes`, `BytesMut`
 pub trait AsPtr<T> {
     fn as_ptr(&self) -> *const T;
     fn len(&self) -> usize;

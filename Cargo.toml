@@ -19,3 +19,14 @@ bytes = "1.11.1"
 futures-core = "0.3.32"
 pin-project-lite = "0.2.16"
 atomic-time = "0.1.5"
+
+[features]
+default = []
+# Enable MSG_WAITFORONE flag for recvmmsg on blocking sockets.
+# With this flag, blocking recvmmsg returns after receiving at least one packet.
+# Without it, blocking recvmmsg waits for the exact number of packets specified (vlen).
+# This has no effect on non-blocking or async sockets.
+msg-waitforone = []
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["net", "macros", "rt-multi-thread"] }

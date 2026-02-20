@@ -610,7 +610,7 @@ pub mod sync {
         ///
         /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
         pub fn send_mmsg<B: AsPtr<u8>>(
-            &mut self,
+            &self,
             state: &UdpState,
             transmits: &[Transmit<B>],
         ) -> Result<usize, io::Error> {
@@ -627,7 +627,7 @@ pub mod sync {
         ///
         /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
         pub fn send_mmsg_with_batch_size<B: AsPtr<u8>, const BATCH_SIZE: usize>(
-            &mut self,
+            &self,
             state: &UdpState,
             transmits: &[Transmit<B>],
         ) -> Result<usize, io::Error> {
@@ -1039,6 +1039,16 @@ fn recv<const BATCH_SIZE: usize>(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                // https://lwn.net/Articles/380692/
+                // Add new flag MSG_WAITFORONE for the recvmmsg() syscall.
+                // When this flag is specified for a blocking socket, recvmmsg()
+                // will only block until at least 1 packet is available.  The
+                // default behavior is to block until all vlen packets are
+                // available.  This flag has no effect on non-blocking sockets
+                // or when used in combination with MSG_DONTWAIT.
+                #[cfg(feature = "msg-waitforone")]
+                libc::MSG_WAITFORONE,
+                #[cfg(not(feature = "msg-waitforone"))]
                 0,
                 ptr::null_mut(),
             )
@@ -1049,6 +1059,9 @@ fn recv<const BATCH_SIZE: usize>(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as usize,
+                #[cfg(feature = "msg-waitforone")]
+                libc::MSG_WAITFORONE as libc::c_int,
+                #[cfg(not(feature = "msg-waitforone"))]
                 0,
                 ptr::null_mut(),
             )

@@ -28,7 +28,7 @@ use crate::{RecvMeta, UdpSocket};
 /// them into separate objects, allowing them to interact more easily.
 ///
 /// [`Stream`]: futures_core::Stream
-/// [`Sink`]: futures_sink::Sink
+/// [`Sink`]: https://docs.rs/futures/0.3/futures/sink/trait.Sink.html
 /// [`split`]: https://docs.rs/futures/0.3/futures/stream/trait.StreamExt.html#method.split
 #[must_use = "sinks do nothing unless polled"]
 #[derive(Debug)]
