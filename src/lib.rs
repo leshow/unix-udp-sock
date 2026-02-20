@@ -13,7 +13,7 @@ mod cmsg;
 #[path = "unix.rs"]
 mod imp;
 
-pub use imp::{sync, UdpSocket};
+pub use imp::{UdpSocket, sync};
 pub mod framed;
 
 /// Maximum number of UDP packets that can be sent by the `sendmmsg`/`recvmmsg`
@@ -116,8 +116,14 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
 ) {
     if last_send_error.should_log() {
         warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.dst, transmit.src, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+            "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
+            err,
+            transmit.dst,
+            transmit.src,
+            transmit.ecn,
+            transmit.contents.len(),
+            transmit.segment_size
+        );
     }
 }
 

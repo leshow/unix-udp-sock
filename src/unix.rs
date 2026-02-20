@@ -5,8 +5,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::{fd::AsFd, unix::io::AsRawFd},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -20,7 +20,7 @@ use tokio::{
     net::ToSocketAddrs,
 };
 
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{IO_ERROR_LOG_INTERVAL, RecvMeta, UdpState, cmsg, log_sendmsg_error};
 use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
 
 pub(crate) const BATCH_SIZE_CAP: usize = SYS_BATCH_SIZE_CAP;
