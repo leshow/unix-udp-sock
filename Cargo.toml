@@ -1,7 +1,7 @@
 [package]
 name = "unix-udp-sock"
-version = "0.9.0-alpha"
-edition = "2021"
+version = "0.9.0"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/leshow/unix-udp-sock"
 description = "async & sync UDP sockets supporting sendmsg/recvmsg and src IP manipulation"
@@ -10,15 +10,15 @@ categories = ["network-programming", "asynchronous"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2.153"
-socket2 = "0.5.6"
-tracing = "0.1.40"
-tokio = { version = "1.37.0", features = ["net"] }
-tokio-util = { version = "0.7.10", features = ["codec", "net"] }
-bytes = "1.1.0"
-futures-core = "0.3.30"
-futures-sink = "0.3.30"
-pin-project-lite = "0.2.14"
+libc = "0.2.182"
+socket2 = "0.6.2"
+tracing = "0.1.44"
+tokio = { version = "1.49.0", features = ["net"] }
+tokio-util = { version = "0.7.18", features = ["codec", "net"] }
+bytes = "1.11.1"
+futures-core = "0.3.32"
+pin-project-lite = "0.2.16"
+atomic-time = "0.1.5"
 
 # [dev-dependencies]
 # nix = "0.26"

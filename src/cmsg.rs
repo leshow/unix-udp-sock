@@ -27,7 +27,7 @@ impl<'a> Encoder<'a> {
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
     pub unsafe fn new(hdr: &'a mut libc::msghdr) -> Self {
         Self {
-            cmsg: libc::CMSG_FIRSTHDR(hdr).as_mut(),
+            cmsg: unsafe { libc::CMSG_FIRSTHDR(hdr).as_mut() },
             hdr,
             len: 0,
         }
@@ -39,7 +39,7 @@ impl<'a> Encoder<'a> {
     /// - If insufficient buffer space remains.
     /// - If `T` has stricter alignment requirements than `cmsghdr`
     #[allow(clippy::unnecessary_cast)]
-    pub fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
+    pub fn push<T: Copy>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
         let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
         assert!(
@@ -81,9 +81,9 @@ pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
     debug_assert_eq!(
         cmsg.cmsg_len as usize,
-        libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
+        unsafe { libc::CMSG_LEN(mem::size_of::<T>() as _) } as usize
     );
-    ptr::read(libc::CMSG_DATA(cmsg) as *const T)
+    unsafe { ptr::read(libc::CMSG_DATA(cmsg) as *const T) }
 }
 
 pub struct Iter<'a> {
@@ -100,7 +100,7 @@ impl<'a> Iter<'a> {
     pub unsafe fn new(hdr: &'a libc::msghdr) -> Self {
         Self {
             hdr,
-            cmsg: libc::CMSG_FIRSTHDR(hdr).as_ref(),
+            cmsg: unsafe { libc::CMSG_FIRSTHDR(hdr).as_ref() },
         }
     }
 }
