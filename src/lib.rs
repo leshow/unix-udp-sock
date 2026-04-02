@@ -1,4 +1,5 @@
-//! Uniform interface to send/recv UDP packets with ECN information.
+#![doc = include_str!("../README.md")]
+
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicUsize, Ordering},
@@ -13,7 +14,7 @@ mod cmsg;
 #[path = "unix.rs"]
 mod imp;
 
-pub use imp::{sync, UdpSocket};
+pub use imp::{UdpSocket, sync};
 pub mod framed;
 
 /// Maximum number of UDP packets that can be sent by the `sendmmsg`/`recvmmsg`
@@ -28,7 +29,21 @@ pub const BATCH_SIZE_CAP: usize = imp::BATCH_SIZE_CAP;
 /// Default number of UDP packets to send/receive at a time.
 pub const DEFAULT_BATCH_SIZE: usize = imp::DEFAULT_BATCH_SIZE;
 
-/// The capabilities a UDP socket suppports on a certain platform
+/// The capabilities a UDP socket supports on the current platform.
+///
+/// Query platform-specific UDP features like GSO (Generic Segmentation Offload)
+/// and GRO (Generic Receive Offload). Create with [`UdpState::new()`] to detect
+/// capabilities at runtime.
+///
+/// # Example
+///
+/// ```
+/// use unix_udp_sock::UdpState;
+///
+/// let state = UdpState::new();
+/// println!("Max GSO segments: {}", state.max_gso_segments());
+/// println!("GRO segments: {}", state.gro_segments());
+/// ```
 #[derive(Debug)]
 pub struct UdpState {
     max_gso_segments: AtomicUsize,
@@ -66,18 +81,44 @@ impl Default for UdpState {
     }
 }
 
-/// Metadata about received packet. Includes which address we
-/// recv'd from, how many bytes, ecn codepoints, what the
-/// destination IP used was and what interface index was used.
+/// Metadata about a received UDP datagram.
+///
+/// This structure provides detailed information about a received packet including
+/// the sender's address, packet size, ECN codepoint, destination IP, and network
+/// interface information.
+///
+/// Obtained from [`recv_msg`](UdpSocket::recv_msg) or [`recv_mmsg`](UdpSocket::recv_mmsg).
+///
+/// # Example
+///
+/// ```no_run
+/// use unix_udp_sock::sync::UdpSocket;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let socket = UdpSocket::bind("0.0.0.0:8080")?;
+/// let mut buf = [0u8; 1500];
+/// let meta = socket.recv_msg(&mut buf)?;
+///
+/// println!("From: {}", meta.addr);
+/// println!("Length: {} bytes", meta.len);
+/// if let Some(dst) = meta.dst_ip {
+///     println!("Destination IP: {}", dst);
+/// }
+/// if let Some(ecn) = meta.ecn {
+///     println!("ECN: {:?}", ecn);
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
     /// address we received datagram on
     pub addr: SocketAddr,
     /// length of datagram
     pub len: usize,
-    /// received datagram stride
+    /// The stride for GRO (Generic Receive Offload) packets, 0 otherwise
     pub stride: usize,
-    /// ECN codepoint
+    /// The ECN (Explicit Congestion Notification) codepoint, if available
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address for this datagram (ipi_addr)
     pub dst_ip: Option<IpAddr>,
@@ -116,8 +157,14 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
 ) {
     if last_send_error.should_log() {
         warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.dst, transmit.src, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+            "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
+            err,
+            transmit.dst,
+            transmit.src,
+            transmit.ecn,
+            transmit.contents.len(),
+            transmit.segment_size
+        );
     }
 }
 
@@ -193,5 +240,113 @@ mod tests {
             // dst_local_ip might be 127.0.0.1
             Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
         ));
+    }
+
+    // README example tests
+    #[test]
+    fn test_send_recv_msg_sync() {
+        let socket = sync::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let state = UdpState::new();
+        let dest = socket.local_addr().unwrap();
+
+        // Send with custom source IP and ECN marking
+        let data = b"hello world";
+        let transmit = Transmit::new(dest, *data)
+            .src_ip(Source::Ip("127.0.0.1".parse().unwrap()))
+            .ecn(EcnCodepoint::Ect0);
+
+        socket.send_msg(&state, transmit).unwrap();
+
+        // Receive with full metadata
+        let mut buf = [0u8; 1500];
+        let meta = socket.recv_msg(&mut buf).unwrap();
+
+        assert_eq!(&buf[..meta.len], b"hello world");
+        assert_eq!(meta.ecn, Some(EcnCodepoint::Ect0));
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_msg_async() {
+        let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let state = UdpState::new();
+        let dest = socket.local_addr().unwrap();
+
+        // Send with custom source IP and ECN marking
+        let data = b"hello world";
+        let transmit = Transmit::new(dest, *data)
+            .src_ip(Source::Ip("127.0.0.1".parse().unwrap()))
+            .ecn(EcnCodepoint::Ect0);
+
+        socket.send_msg(&state, transmit).await.unwrap();
+
+        // Receive with full metadata
+        let mut buf = [0u8; 1500];
+        let meta = socket.recv_msg(&mut buf).await.unwrap();
+
+        assert_eq!(&buf[..meta.len], b"hello world");
+        assert_eq!(meta.ecn, Some(EcnCodepoint::Ect0));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn test_send_recv_mmsg_sync() {
+        use std::io::IoSliceMut;
+
+        // Test blocking socket with exact batch size matching packet count
+        let a = sync::UdpSocket::bind("127.0.0.1:9905").unwrap();
+        let b = sync::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let state = UdpState::new();
+        let dest = a.local_addr().unwrap();
+
+        // Send 2 packets
+        let packets = [
+            Transmit::new(dest, [1, 2, 3, 4]),
+            Transmit::new(dest, [5, 6, 7, 8]),
+        ];
+        let sent = b.send_mmsg(&state, &packets).unwrap();
+
+        // Receive with batch size of 2 to match packet count
+        // With msg-waitforone: blocks for first packet, returns with all available
+        // Without msg-waitforone: would block until exactly 2 packets arrive
+        let mut bufs = [[0u8; 10]; 2];
+        let mut slices: Vec<IoSliceMut> = bufs.iter_mut().map(|buf| IoSliceMut::new(buf)).collect();
+        let mut meta = [RecvMeta::default(); 2];
+        let received = a
+            .recv_mmsg_with_batch_size::<2>(&mut slices, &mut meta)
+            .unwrap();
+
+        assert_eq!(sent, 2);
+        assert_eq!(received, 2);
+        assert_eq!(&bufs[0][..4], &[1, 2, 3, 4]);
+        assert_eq!(&bufs[1][..4], &[5, 6, 7, 8]);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[tokio::test]
+    async fn test_send_recv_mmsg_async() {
+        use std::io::IoSliceMut;
+
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let state = UdpState::new();
+        let dest = a.local_addr().unwrap();
+
+        // Send multiple packets in one syscall
+        let packets = [
+            Transmit::new(dest, [1, 2, 3, 4]),
+            Transmit::new(dest, [5, 6, 7, 8]),
+        ];
+        let sent = b.send_mmsg(&state, &packets).await.unwrap();
+        assert_eq!(sent, 2);
+
+        // Receive multiple packets in one syscall
+        let mut bufs = [[0u8; 1500]; 2];
+        let mut slices: Vec<IoSliceMut> = bufs.iter_mut().map(|buf| IoSliceMut::new(buf)).collect();
+        let mut meta = [RecvMeta::default(); 10];
+        let received = a.recv_mmsg(&mut slices, &mut meta).await.unwrap();
+
+        assert_eq!(received, 2);
+        assert_eq!(&bufs[0][..4], &[1, 2, 3, 4]);
+        assert_eq!(&bufs[1][..4], &[5, 6, 7, 8]);
     }
 }

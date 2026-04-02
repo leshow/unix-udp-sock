@@ -5,14 +5,14 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::{fd::AsFd, unix::io::AsRawFd},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
-    time::SystemTime,
+    time::Duration,
 };
 
-use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
+use atomic_time::AtomicInstant;
 use futures_core::ready;
 use socket2::SockRef;
 use tokio::{
@@ -20,7 +20,8 @@ use tokio::{
     net::ToSocketAddrs,
 };
 
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{IO_ERROR_LOG_INTERVAL, RecvMeta, UdpState, cmsg, log_sendmsg_error};
+use crate::cmsg::{AsPtr, EcnCodepoint, Source, Transmit};
 
 pub(crate) const BATCH_SIZE_CAP: usize = SYS_BATCH_SIZE_CAP;
 
@@ -71,37 +72,42 @@ impl AsFd for UdpSocket {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct LastSendError(Arc<AtomicU64>);
+#[derive(Clone)]
+pub(crate) struct LastSendError(Arc<AtomicInstant>);
 
 impl Default for LastSendError {
     fn default() -> Self {
-        let now = Self::now();
-        Self(Arc::new(AtomicU64::new(
-            now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
+        let now = std::time::Instant::now();
+        Self(Arc::new(AtomicInstant::new(
+            now.checked_sub(2 * Duration::from_secs(IO_ERROR_LOG_INTERVAL))
+                .unwrap_or(now),
         )))
     }
 }
 
-impl LastSendError {
-    fn now() -> u64 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+impl std::fmt::Debug for LastSendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LastSendError").finish()
     }
+}
 
+impl LastSendError {
     /// Determine whether the last error was more than `IO_ERROR_LOG_INTERVAL`
     /// seconds ago. If so, update the last error time and return true.
     ///
-    /// Note: if the system clock regresses more tha `IO_ERROR_LOG_INTERVAL`,
+    /// Note: if the system clock regresses more than `IO_ERROR_LOG_INTERVAL`,
     /// this function may impose an additional delay on log message emission.
     /// Similarly, if it advances, messages may be emitted prematurely.
     pub(crate) fn should_log(&self) -> bool {
-        let now = Self::now();
+        let now = std::time::Instant::now();
+
         self.0
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |cur| {
-                (now.saturating_sub(cur) > IO_ERROR_LOG_INTERVAL).then_some(now)
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
+                if now.duration_since(last).as_secs() > IO_ERROR_LOG_INTERVAL {
+                    Some(now)
+                } else {
+                    None
+                }
             })
             .is_ok()
     }
@@ -604,7 +610,7 @@ pub mod sync {
         ///
         /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
         pub fn send_mmsg<B: AsPtr<u8>>(
-            &mut self,
+            &self,
             state: &UdpState,
             transmits: &[Transmit<B>],
         ) -> Result<usize, io::Error> {
@@ -621,7 +627,7 @@ pub mod sync {
         ///
         /// [`sendmmsg`]: https://linux.die.net/man/2/sendmmsg
         pub fn send_mmsg_with_batch_size<B: AsPtr<u8>, const BATCH_SIZE: usize>(
-            &mut self,
+            &self,
             state: &UdpState,
             transmits: &[Transmit<B>],
         ) -> Result<usize, io::Error> {
@@ -1033,6 +1039,16 @@ fn recv<const BATCH_SIZE: usize>(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                // https://lwn.net/Articles/380692/
+                // Add new flag MSG_WAITFORONE for the recvmmsg() syscall.
+                // When this flag is specified for a blocking socket, recvmmsg()
+                // will only block until at least 1 packet is available.  The
+                // default behavior is to block until all vlen packets are
+                // available.  This flag has no effect on non-blocking sockets
+                // or when used in combination with MSG_DONTWAIT.
+                #[cfg(feature = "msg-waitforone")]
+                libc::MSG_WAITFORONE,
+                #[cfg(not(feature = "msg-waitforone"))]
                 0,
                 ptr::null_mut(),
             )
@@ -1043,6 +1059,9 @@ fn recv<const BATCH_SIZE: usize>(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as usize,
+                #[cfg(feature = "msg-waitforone")]
+                libc::MSG_WAITFORONE as libc::c_int,
+                #[cfg(not(feature = "msg-waitforone"))]
                 0,
                 ptr::null_mut(),
             )
@@ -1436,5 +1455,47 @@ mod gro {
 mod gro {
     pub fn gro_segments() -> usize {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_last_send_error() {
+        let error = LastSendError::default();
+        // First call should return true
+        assert!(error.should_log(), "First call should allow logging");
+
+        // Immediate second call false (not enough time passed)
+        assert!(!error.should_log(), "Second call should not allow logging");
+    }
+
+    #[test]
+    fn test_last_send_error_threads() {
+        use std::{sync::Arc, thread};
+
+        // Test that only one thread wins the race when multiple threads
+        // call should_log() simultaneously
+        let error = Arc::new(LastSendError::default());
+
+        // Spawn multiple threads that all try to log at once
+        let handles = (0..10)
+            .map(|_| {
+                let error = Arc::clone(&error);
+                thread::spawn(move || error.should_log())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|&x| x)
+                .count(),
+            1,
+            "one thread should win the race"
+        );
     }
 }

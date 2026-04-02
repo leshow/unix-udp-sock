@@ -70,11 +70,17 @@ jobs:
           toolchain: ${{ matrix.rust }}
           override: true
 
-      - name: Run cargo test
+      - name: Run cargo test (all features)
         uses: actions-rs/cargo@v1
         with:
           command: test
           args: --all-features
+
+      - name: Run cargo test (no default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
 
   test-mac:
     name: Test Suite (macOS)
@@ -93,11 +99,17 @@ jobs:
           toolchain: ${{ matrix.rust }}
           override: true
 
-      - name: Run cargo test
+      - name: Run cargo test (all features)
         uses: actions-rs/cargo@v1
         with:
           command: test
           args: --all-features
+
+      - name: Run cargo test (no default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
 
   fmt:
     name: Rustfmt
