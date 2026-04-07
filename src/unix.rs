@@ -347,9 +347,11 @@ impl UdpSocket {
     ) -> io::Result<usize> {
         debug_assert!(!bufs.is_empty());
         loop {
-            self.io.readable().await?;
+            self.io
+                .ready(Interest::READABLE | Interest::ERROR)
+                .await?;
             let io = &self.io;
-            match io.try_io(Interest::READABLE, || {
+            match io.try_io(Interest::READABLE | Interest::ERROR, || {
                 recv::<BATCH_SIZE>(SockRef::from(io), bufs, meta)
             }) {
                 Ok(res) => return Ok(res),
@@ -366,9 +368,13 @@ impl UdpSocket {
         let mut iov = IoSliceMut::new(buf);
         debug_assert!(!iov.is_empty());
         loop {
-            self.io.readable().await?;
+            self.io
+                .ready(Interest::READABLE | Interest::ERROR)
+                .await?;
             let io = &self.io;
-            match io.try_io(Interest::READABLE, || recv_msg(SockRef::from(io), &mut iov)) {
+            match io.try_io(Interest::READABLE | Interest::ERROR, || {
+                recv_msg(SockRef::from(io), &mut iov)
+            }) {
                 Ok(res) => return Ok(res),
                 Err(_would_block) => continue,
             }
@@ -435,7 +441,11 @@ impl UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             let io = &self.io;
-            if let Ok(res) = io.try_io(Interest::READABLE, || recv_msg(SockRef::from(io), buf)) {
+            if let Ok(res) =
+                io.try_io(Interest::READABLE | Interest::ERROR, || {
+                    recv_msg(SockRef::from(io), buf)
+                })
+            {
                 return Poll::Ready(Ok(res));
             }
         }
@@ -462,7 +472,7 @@ impl UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             let io = &self.io;
-            if let Ok(res) = io.try_io(Interest::READABLE, || {
+            if let Ok(res) = io.try_io(Interest::READABLE | Interest::ERROR, || {
                 recv::<BATCH_SIZE>(SockRef::from(io), bufs, meta)
             }) {
                 return Poll::Ready(Ok(res));
