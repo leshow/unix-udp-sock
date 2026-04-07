@@ -346,18 +346,11 @@ impl UdpSocket {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         debug_assert!(!bufs.is_empty());
-        loop {
-            self.io
-                .ready(Interest::READABLE | Interest::ERROR)
-                .await?;
-            let io = &self.io;
-            match io.try_io(Interest::READABLE | Interest::ERROR, || {
-                recv::<BATCH_SIZE>(SockRef::from(io), bufs, meta)
-            }) {
-                Ok(res) => return Ok(res),
-                Err(_would_block) => continue,
-            }
-        }
+        let io = &self.io;
+        io.async_io(Interest::READABLE | Interest::ERROR, || {
+            recv::<BATCH_SIZE>(SockRef::from(io), bufs, meta)
+        })
+        .await
     }
 
     /// `recv_msg` is similar to `recv_from` but returns extra information
@@ -367,18 +360,11 @@ impl UdpSocket {
     pub async fn recv_msg(&self, buf: &mut [u8]) -> io::Result<RecvMeta> {
         let mut iov = IoSliceMut::new(buf);
         debug_assert!(!iov.is_empty());
-        loop {
-            self.io
-                .ready(Interest::READABLE | Interest::ERROR)
-                .await?;
-            let io = &self.io;
-            match io.try_io(Interest::READABLE | Interest::ERROR, || {
-                recv_msg(SockRef::from(io), &mut iov)
-            }) {
-                Ok(res) => return Ok(res),
-                Err(_would_block) => continue,
-            }
-        }
+        let io = &self.io;
+        io.async_io(Interest::READABLE | Interest::ERROR, || {
+            recv_msg(SockRef::from(io), &mut iov)
+        })
+        .await
     }
 
     /// calls `sendmmsg`
