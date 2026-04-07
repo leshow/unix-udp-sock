@@ -132,6 +132,13 @@ mod tests {
         let s = sync::UdpSocket::bind("0.0.0.0:9909");
         assert!(s.is_ok());
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_create_async() {
+        let s = UdpSocket::bind("0.0.0.0:0").await;
+        assert!(s.is_ok());
+    }
+
     #[test]
     fn test_send_recv() {
         let saddr = "0.0.0.0:9901".parse().unwrap();
@@ -144,6 +151,20 @@ mod tests {
         a.recv_from(&mut r).unwrap();
         assert_eq!(buf[..], r[..11]);
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_send_recv_async() {
+        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let saddr = a.local_addr().unwrap();
+        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let buf = b"hello world";
+        b.send_to(&buf[..], saddr).await.unwrap();
+
+        let mut r = [0; 1024];
+        a.recv_from(&mut r).await.unwrap();
+        assert_eq!(buf[..], r[..11]);
+    }
+
     #[test]
     fn test_send_recv_msg() {
         let saddr = "0.0.0.0:9902".parse().unwrap();
@@ -169,6 +190,31 @@ mod tests {
             Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
         ));
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_send_recv_msg_async() {
+        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let saddr = a.local_addr().unwrap();
+        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let send_port = b.local_addr().unwrap().port();
+        let send_addr = b.local_addr().unwrap().ip();
+        let buf = b"hello world";
+        let src = Source::Interface(1);
+        let tr = Transmit::new(saddr, *buf).src_ip(src);
+        b.send_msg(&UdpState::new(), tr).await.unwrap();
+
+        let mut r = [0; 1024];
+        let meta = a.recv_msg(&mut r).await.unwrap();
+        assert_eq!(buf[..], r[..11]);
+        assert_eq!(send_port, meta.addr.port());
+        assert_eq!(meta.ifindex, 1);
+        assert!(matches!(
+            meta.dst_local_ip,
+            // dst_local_ip might be 127.0.0.1
+            Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
+        ));
+    }
+
     #[test]
     fn test_send_recv_msg_ip() {
         let saddr = "0.0.0.0:9903".parse().unwrap();
@@ -193,5 +239,50 @@ mod tests {
             // dst_local_ip might be 127.0.0.1
             Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_send_recv_msg_ip_async() {
+        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let saddr = a.local_addr().unwrap();
+        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let send_port = b.local_addr().unwrap().port();
+        let send_addr = b.local_addr().unwrap().ip();
+        let buf = b"hello world";
+        let src = Source::Ip("0.0.0.0".parse().unwrap());
+        let tr = Transmit::new(saddr, *buf).src_ip(src);
+        b.send_msg(&UdpState::new(), tr).await.unwrap();
+
+        let mut r = [0; 1024];
+        let meta = a.recv_msg(&mut r).await.unwrap();
+        assert_eq!(buf[..], r[..11]);
+        assert_eq!(send_port, meta.addr.port());
+        assert_eq!(meta.ifindex, 1);
+        assert!(matches!(
+            meta.dst_local_ip,
+            // dst_local_ip might be 127.0.0.1
+            Some(addr) if addr == send_addr || addr == IpAddr::V4(Ipv4Addr::LOCALHOST)
+        ));
+    }
+
+    // from: https://github.com/tokio-rs/tokio/issues/8000
+    #[tokio::test]
+    async fn test_so_error() {
+        // Bind a server socket then immediately drop it to get a port we know is closed
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target: SocketAddr = server.local_addr().unwrap();
+        drop(server);
+
+        let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sock.connect(target).await.unwrap();
+        let buf = b"hello world";
+        let src = Source::Ip("0.0.0.0".parse().unwrap());
+        let tr = Transmit::new(target, *buf).src_ip(src);
+        sock.send_msg(&UdpState::new(), tr).await.unwrap();
+
+        let mut buf = [0; 11];
+        let result = sock.recv_msg(&mut buf).await; // hangs infinitely if so_error isn't registered
+        dbg!(&result);
+        assert!(result.is_err());
     }
 }

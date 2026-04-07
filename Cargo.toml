@@ -13,12 +13,13 @@ categories = ["network-programming", "asynchronous"]
 libc = "0.2.153"
 socket2 = "0.6.3"
 tracing = "0.1.40"
-tokio = { version = "1.51.0", features = ["net"] }
+tokio = { version = "1.50.0", features = ["net"] }
 tokio-util = { version = "0.7.18", features = ["codec", "net"] }
 bytes = "1.11.1"
 futures-core = "0.3.30"
 futures-sink = "0.3.30"
 pin-project-lite = "0.2.14"
 
-# [dev-dependencies]
+[dev-dependencies]
+tokio = { version = "1.50.0", features = ["macros", "rt"] }
 # nix = "0.26"
