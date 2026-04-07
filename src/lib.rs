@@ -123,7 +123,7 @@ fn log_sendmsg_error<B: AsPtr<u8>>(
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{future::poll_fn, io::IoSliceMut, net::Ipv4Addr, time::Duration};
 
     use super::*;
 
@@ -281,8 +281,30 @@ mod tests {
         sock.send_msg(&UdpState::new(), tr).await.unwrap();
 
         let mut buf = [0; 11];
-        let result = sock.recv_msg(&mut buf).await; // hangs infinitely if so_error isn't registered
-        dbg!(&result);
-        assert!(result.is_err());
+        let result = sock.recv_msg(&mut buf).await.unwrap_err(); // hangs infinitely if so_error isn't registered
+        assert_eq!(result.kind(), std::io::ErrorKind::ConnectionRefused);
     }
+
+    // #[tokio::test(flavor = "current_thread")]
+    // async fn test_poll_recv_msg_so_error() {
+    //     let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    //     let target: SocketAddr = server.local_addr().unwrap();
+    //     drop(server);
+
+    //     let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    //     sock.connect(target).await.unwrap();
+    //     sock.send(b"ping").await.unwrap();
+
+    //     let mut buf = [0; 8];
+    //     let mut iov = IoSliceMut::new(&mut buf);
+    //     let result = tokio::time::timeout(
+    //         Duration::from_millis(200),
+    //         poll_fn(|cx| sock.poll_recv_msg(cx, &mut iov)),
+    //     )
+    //     .await
+    //     .expect("poll_recv_msg timed out before returning the socket error")
+    //     .unwrap_err();
+
+    //     assert_eq!(result.kind(), std::io::ErrorKind::ConnectionRefused);
+    // }
 }
