@@ -129,21 +129,21 @@ mod tests {
 
     #[test]
     fn test_create() {
-        let s = sync::UdpSocket::bind("0.0.0.0:9909");
+        let s = sync::UdpSocket::bind("127.0.0.1:9909");
         assert!(s.is_ok());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_create_async() {
-        let s = UdpSocket::bind("0.0.0.0:0").await;
+        let s = UdpSocket::bind("127.0.0.1:0").await;
         assert!(s.is_ok());
     }
 
     #[test]
     fn test_send_recv() {
-        let saddr = "0.0.0.0:9901".parse().unwrap();
+        let saddr = "127.0.0.1:9901".parse().unwrap();
         let a = sync::UdpSocket::bind(saddr).unwrap();
-        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let b = sync::UdpSocket::bind("127.0.0.1:0").unwrap();
         let buf = b"hello world";
         b.send_to(&buf[..], saddr).unwrap();
         // recv
@@ -154,9 +154,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_send_recv_async() {
-        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let saddr = a.local_addr().unwrap();
-        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let buf = b"hello world";
         b.send_to(&buf[..], saddr).await.unwrap();
 
@@ -167,9 +167,9 @@ mod tests {
 
     #[test]
     fn test_send_recv_msg() {
-        let saddr = "0.0.0.0:9902".parse().unwrap();
+        let saddr = "127.0.0.1:9902".parse().unwrap();
         let a = sync::UdpSocket::bind(saddr).unwrap();
-        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let b = sync::UdpSocket::bind("127.0.0.1:0").unwrap();
         let send_port = b.local_addr().unwrap().port();
         let send_addr = b.local_addr().unwrap().ip();
         let buf = b"hello world";
@@ -193,9 +193,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_send_recv_msg_async() {
-        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let saddr = a.local_addr().unwrap();
-        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let send_port = b.local_addr().unwrap().port();
         let send_addr = b.local_addr().unwrap().ip();
         let buf = b"hello world";
@@ -217,13 +217,13 @@ mod tests {
 
     #[test]
     fn test_send_recv_msg_ip() {
-        let saddr = "0.0.0.0:9903".parse().unwrap();
+        let saddr = "127.0.0.1:9903".parse().unwrap();
         let a = sync::UdpSocket::bind(saddr).unwrap();
-        let b = sync::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let b = sync::UdpSocket::bind("127.0.0.1:0").unwrap();
         let send_port = b.local_addr().unwrap().port();
         let send_addr = b.local_addr().unwrap().ip();
         let buf = b"hello world";
-        let src = Source::Ip("0.0.0.0".parse().unwrap());
+        let src = Source::Ip("127.0.0.1".parse().unwrap());
         let tr = Transmit::new(saddr, *buf).src_ip(src);
         b.send_msg(&UdpState::new(), tr).unwrap();
         // recv
@@ -243,13 +243,13 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_send_recv_msg_ip_async() {
-        let a = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let saddr = a.local_addr().unwrap();
-        let b = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let send_port = b.local_addr().unwrap().port();
         let send_addr = b.local_addr().unwrap().ip();
         let buf = b"hello world";
-        let src = Source::Ip("0.0.0.0".parse().unwrap());
+        let src = Source::Ip("127.0.0.1".parse().unwrap());
         let tr = Transmit::new(saddr, *buf).src_ip(src);
         b.send_msg(&UdpState::new(), tr).await.unwrap();
 
@@ -276,7 +276,7 @@ mod tests {
         let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         sock.connect(target).await.unwrap();
         let buf = b"hello world";
-        let src = Source::Ip("0.0.0.0".parse().unwrap());
+        let src = Source::Ip("127.0.0.1".parse().unwrap());
         let tr = Transmit::new(target, *buf).src_ip(src);
         sock.send_msg(&UdpState::new(), tr).await.unwrap();
 
