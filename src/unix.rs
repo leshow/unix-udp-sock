@@ -421,9 +421,7 @@ impl UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             let io = &self.io;
-            if let Ok(res) = io.try_io(Interest::READABLE | Interest::ERROR, || {
-                recv_msg(SockRef::from(io), buf)
-            }) {
+            if let Ok(res) = io.try_io(Interest::READABLE, || recv_msg(SockRef::from(io), buf)) {
                 return Poll::Ready(Ok(res));
             }
         }
@@ -450,7 +448,7 @@ impl UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             let io = &self.io;
-            if let Ok(res) = io.try_io(Interest::READABLE | Interest::ERROR, || {
+            if let Ok(res) = io.try_io(Interest::READABLE, || {
                 recv::<BATCH_SIZE>(SockRef::from(io), bufs, meta)
             }) {
                 return Poll::Ready(Ok(res));
