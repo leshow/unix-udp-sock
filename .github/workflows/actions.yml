@@ -74,7 +74,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all-features
+          args: --all-features -- --nocapture
 
   test-mac:
     name: Test Suite (macOS)
@@ -97,7 +97,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all-features
+          args: --all-features -- --nocapture
 
   fmt:
     name: Rustfmt
