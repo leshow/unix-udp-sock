@@ -216,7 +216,7 @@ impl UdpSocket {
     /// See tokio [`poll_send`]
     ///
     /// [`poll_send`]: method@tokio::net::UdpSocket::poll_send
-    pub async fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    pub fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         self.io.poll_send(cx, buf)
     }
     /// Receives a single datagram message on the socket. On success, returns
