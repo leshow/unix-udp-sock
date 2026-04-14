@@ -739,13 +739,7 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             )?;
         }
     }
-    #[cfg(target_os = "macos")]
-    {
-        if is_ipv4 {
-            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
-        }
-    }
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
     // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
     // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
     // macOS also supports IP_PKTINFO
@@ -1276,7 +1270,7 @@ fn decode_recv(
                     ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
                 }
             },
-            #[cfg(not(target_os = "freebsd"))]
+            #[cfg(target_os = "linux")]
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo>(cmsg) };
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
@@ -1287,13 +1281,19 @@ fn decode_recv(
                 )));
                 ifindex = pktinfo.ipi_ifindex as _;
             }
+            #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+            (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
+                let in_addr = unsafe { cmsg::decode::<libc::in_addr>(cmsg) };
+                let addr = IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes()));
+                dst_ip = Some(addr);
+                dst_local_ip = Some(addr);
+            }
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
                 ifindex = pktinfo.ipi6_ifindex;
             }
-            // freebsd doesn't have PKTINFO
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "macos"))]
             (libc::IPPROTO_IP, libc::IP_RECVIF) => {
                 let info = unsafe { cmsg::decode::<libc::sockaddr_dl>(cmsg) };
                 ifindex = info.sdl_index as _;
