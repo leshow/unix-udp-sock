@@ -272,6 +272,7 @@ mod tests {
     }
 
     // from: https://github.com/tokio-rs/tokio/issues/8000
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn test_so_error() {
         // Bind a server socket then immediately drop it to get a port we know is closed
