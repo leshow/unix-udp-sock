@@ -81,7 +81,13 @@ pub struct RecvMeta {
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address for this datagram (ipi_addr)
     pub dst_ip: Option<IpAddr>,
-    /// The destination local IP address for this datagram (ipi_spec_dst)
+    /// The destination local IP address for this datagram
+    ///
+    /// On Linux IPv4 this corresponds to `ipi_spec_dst` and can differ from
+    /// `dst_ip`.
+    ///
+    /// On macOS and FreeBSD IPv4 this is derived from `IP_RECVDSTADDR`, so it
+    /// may be identical to `dst_ip`.
     pub dst_local_ip: Option<IpAddr>,
     /// interface index that datagram was received on
     pub ifindex: u32,
